@@ -1,5 +1,8 @@
-# On the Pi:            docker compose up -d --build
-# Off the Pi (no SPI):  BME_DRIVER=mock docker compose up -d --build
+# On the Pi, using the image CI publishes:  docker compose pull && docker compose up -d
+# Building locally instead:                docker compose up -d --build
+# Off the Pi (no SPI):                     BME_DRIVER=mock docker compose up -d --build
+name: bme280-pi-telemetry
+
 services:
   db:
     image: postgres:16-alpine
@@ -16,6 +19,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: ghcr.io/alext01010100/bme280-pi-telemetry:latest
     build:
       context: .
       dockerfile: service/Dockerfile

@@ -1,5 +1,7 @@
 # bme280-pi-telemetry
 
+[![CI](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml)
+
 Raspberry Pi 5 + Adafruit BME280 (SPI) → C driver → FastAPI service → Postgres → web dashboard.
 
 ```
@@ -23,7 +25,7 @@ git clone https://github.com/AlexT01010100/bme280-pi-telemetry.git
 cd bme280-pi-telemetry
 make                                  # optional: builds the CLI + .so locally
 ./bme280_spi                          # sanity-check the wiring
-docker compose up -d --build
+docker compose pull && docker compose up -d   # or: docker compose up -d --build
 ```
 
 Open `http://<pi-address>:8000/`. API docs are at `/docs`.
@@ -82,6 +84,24 @@ BME_TEST_SPI_DEVICE=/dev/spidev0.0 TEST_DATABASE_URL=... pytest
 ```
 
 Note: the test suite truncates the `readings` table, so point it at a separate database.
+
+## CI/CD
+
+Every push and pull request runs [CI](.github/workflows/ci.yml):
+
+1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi).
+2. **Service tests**: builds `libbme280.so` and runs pytest against Postgres, including the ctypes binding tests.
+3. **Docker image**: builds for `linux/arm64` and `linux/amd64`. On `main` (and `v*` tags) it is published to
+   `ghcr.io/alext01010100/bme280-pi-telemetry`; pull requests build it without publishing.
+
+The Pi pulls new images rather than GitHub pushing to it (GitHub can't reach a Pi on a home network).
+To update by hand or automatically:
+
+```bash
+bash deploy/update.sh                                     # pull latest image + restart if changed
+crontab -e                                                # or check every 15 minutes:
+*/15 * * * * bash ~/bme280-pi-telemetry/deploy/update.sh >> ~/bme-update.log 2>&1
+```
 
 ## Wiring
 
