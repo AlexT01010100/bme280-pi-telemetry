@@ -161,3 +161,7 @@ Issues and pull requests are welcome. You don't need the hardware: run the
 service with `BME_DRIVER=mock` and the test suite against any Postgres
 (see [Tests](#tests)). For bug reports, please include your Pi model, OS
 version, and the output of `/api/health`.
+
+## License
+
+[MIT](LICENSE) © 2026 Alexander Terry
