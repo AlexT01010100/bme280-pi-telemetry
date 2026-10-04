@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 
-#define SPI_DEVICE "/dev/spidev0.0"
-#define SPI_SPEED 500000
+#include "bme280.h"
 
 // Registers
 #define REG_ID 0xD0
@@ -18,8 +17,10 @@
 #define REG_CONFIG 0xF5
 #define REG_PRESS_MSB 0xF7
 
-int fd;
-int32_t t_fine;
+static int fd = -1;
+static uint32_t spi_speed = BME280_DEFAULT_SPEED;
+static uint8_t chip_id;
+static int32_t t_fine;
 
 // Calibration struct
 typedef struct {
@@ -28,12 +29,12 @@ typedef struct {
     uint8_t dig_H1; int16_t dig_H2; uint8_t dig_H3; int16_t dig_H4, dig_H5; int8_t dig_H6;
 } bme280_calib;
 
-bme280_calib calib;
+static bme280_calib calib;
 
 // ---------------- SPI Helpers ----------------
 
 // Multi-byte SPI read
-int spi_read_bytes(uint8_t reg, uint8_t *buf, size_t len) {
+static int spi_read_bytes(uint8_t reg, uint8_t *buf, size_t len) {
     uint8_t tx[256] = {0};
     uint8_t rx[256] = {0};
     if(len + 1 > sizeof(tx)) return -1;
@@ -44,7 +45,7 @@ int spi_read_bytes(uint8_t reg, uint8_t *buf, size_t len) {
     tr.tx_buf = (uint64_t)(uintptr_t)tx;
     tr.rx_buf = (uint64_t)(uintptr_t)rx;
     tr.len = len + 1;
-    tr.speed_hz = SPI_SPEED;
+    tr.speed_hz = spi_speed;
     tr.bits_per_word = 8;
 
     if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 1) return -1;
@@ -54,19 +55,19 @@ int spi_read_bytes(uint8_t reg, uint8_t *buf, size_t len) {
 }
 
 // Single byte SPI write
-int spi_write_byte(uint8_t reg, uint8_t val) {
+static int spi_write_byte(uint8_t reg, uint8_t val) {
     uint8_t tx[2] = { reg & 0x7F, val };
     struct spi_ioc_transfer tr = {0};
     tr.tx_buf = (uint64_t)(uintptr_t)tx;
     tr.rx_buf = 0;
     tr.len = 2;
-    tr.speed_hz = SPI_SPEED;
+    tr.speed_hz = spi_speed;
     tr.bits_per_word = 8;
-    return ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
+    return ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 1 ? -1 : 0;
 }
 
 // ---------------- Calibration ----------------
-int read_calibration() {
+static int read_calibration(void) {
     uint8_t buf[26];
     if(spi_read_bytes(0x88, buf, 26) < 0) return -1;
     calib.dig_T1 = (buf[1]<<8)|buf[0];
@@ -85,23 +86,24 @@ int read_calibration() {
 
     uint8_t buf_h[7];
     if(spi_read_bytes(0xE1, buf_h, 7) < 0) return -1;
-    calib.dig_H2 = (buf_h[1]<<8)|buf_h[0];
+    calib.dig_H2 = (int16_t)((buf_h[1]<<8)|buf_h[0]);
     calib.dig_H3 = buf_h[2];
-    calib.dig_H4 = (buf_h[3]<<4) | (buf_h[4] & 0x0F);
-    calib.dig_H5 = (buf_h[5]<<4) | (buf_h[4] >> 4);
+    // H4/H5 are signed 12-bit: the MSB bytes (0xE4, 0xE6) carry the sign
+    calib.dig_H4 = (int16_t)(((int8_t)buf_h[3] * 16) | (buf_h[4] & 0x0F));
+    calib.dig_H5 = (int16_t)(((int8_t)buf_h[5] * 16) | (buf_h[4] >> 4));
     calib.dig_H6 = (int8_t)buf_h[6];
     return 0;
 }
 
 // ---------------- Compensation ----------------
-double compensate_temp(int32_t adc_T) {
+static double compensate_temp(int32_t adc_T) {
     int32_t var1 = ((((adc_T>>3) - ((int32_t)calib.dig_T1<<1))) * calib.dig_T2) >> 11;
     int32_t var2 = (((((adc_T>>4) - calib.dig_T1) * ((adc_T>>4) - calib.dig_T1)) >> 12) * calib.dig_T3) >> 14;
     t_fine = var1 + var2;
     return ((t_fine * 5 + 128) >> 8) / 100.0;
 }
 
-double compensate_pressure(int32_t adc_P) {
+static double compensate_pressure(int32_t adc_P) {
     int64_t var1 = t_fine - 128000;
     int64_t var2 = var1 * var1 * calib.dig_P6;
     var2 = var2 + ((var1*calib.dig_P5)<<17);
@@ -117,7 +119,7 @@ double compensate_pressure(int32_t adc_P) {
     return (double)p/256.0/100.0; // hPa
 }
 
-double compensate_humidity(int32_t adc_H) {
+static double compensate_humidity(int32_t adc_H) {
     int32_t v_x1_u32r = t_fine - 76800;
     v_x1_u32r = (((((adc_H << 14) - (calib.dig_H4 << 20) - (calib.dig_H5 * v_x1_u32r)) + 16384) >> 15) *
                  (((((((v_x1_u32r * calib.dig_H6) >> 10) * (((v_x1_u32r * calib.dig_H3) >> 11) + 32768)) >> 10) + 2097152) * calib.dig_H2 + 8192) >> 14));
@@ -127,43 +129,93 @@ double compensate_humidity(int32_t adc_H) {
     return (double)(v_x1_u32r>>12)/1024.0;
 }
 
-// ---------------- Main ----------------
-int main() {
-    fd = open(SPI_DEVICE, O_RDWR);
-    if(fd < 0) { perror("SPI open"); return 1; }
+// ---------------- Public API ----------------
+int bme280_init(const char *device, uint32_t speed_hz) {
+    if(fd >= 0) bme280_close();
+    if(!device) device = BME280_DEFAULT_DEVICE;
+    spi_speed = speed_hz ? speed_hz : BME280_DEFAULT_SPEED;
+
+    fd = open(device, O_RDWR);
+    if(fd < 0) return BME280_ERR_OPEN;
 
     uint8_t mode = SPI_MODE_0, bits = 8;
-    uint32_t speed = SPI_SPEED;
-    ioctl(fd, SPI_IOC_WR_MODE, &mode);
-    ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
-    ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
+    if(ioctl(fd, SPI_IOC_WR_MODE, &mode) < 0 ||
+       ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
+       ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &spi_speed) < 0) {
+        bme280_close();
+        return BME280_ERR_SPI;
+    }
 
-    uint8_t chip_id;
-    if(spi_read_bytes(REG_ID, &chip_id, 1) < 0) { perror("SPI read"); return 1; }
-    printf("BME280 Chip ID: 0x%02X\n", chip_id);
-    if(chip_id != 0x60) { printf("Unexpected chip ID\n"); return 1; }
+    if(spi_read_bytes(REG_ID, &chip_id, 1) < 0) { bme280_close(); return BME280_ERR_SPI; }
+    if(chip_id != 0x60) { bme280_close(); return BME280_ERR_CHIP_ID; }
 
-    if(read_calibration() < 0) { perror("Calibration"); return 1; }
+    if(read_calibration() < 0) { bme280_close(); return BME280_ERR_CALIB; }
 
-    // Configure sensor
-    spi_write_byte(REG_CTRL_HUM, 0x01);
-    spi_write_byte(REG_CTRL_MEAS, 0x27);
+    // Configure sensor: humidity x1, then temp x1 / pressure x1 / normal mode
+    // (ctrl_hum only takes effect after a write to ctrl_meas)
+    if(spi_write_byte(REG_CTRL_HUM, 0x01) < 0 ||
+       spi_write_byte(REG_CTRL_MEAS, 0x27) < 0) {
+        bme280_close();
+        return BME280_ERR_SPI;
+    }
 
-    sleep(1);
+    // Let the first conversion complete so an immediate read isn't the reset value
+    usleep(50 * 1000);
+    return BME280_OK;
+}
+
+int bme280_read(bme280_reading *out) {
+    if(fd < 0) return BME280_ERR_NOT_INIT;
 
     uint8_t data[8];
-    if(spi_read_bytes(REG_PRESS_MSB, data, 8) < 0) { perror("SPI read data"); return 1; }
+    if(spi_read_bytes(REG_PRESS_MSB, data, 8) < 0) return BME280_ERR_SPI;
 
     int32_t adc_P = (data[0]<<12) | (data[1]<<4) | (data[2]>>4);
     int32_t adc_T = (data[3]<<12) | (data[4]<<4) | (data[5]>>4);
     int32_t adc_H = (data[6]<<8) | data[7];
 
-    double T = compensate_temp(adc_T);
-    double P = compensate_pressure(adc_P);
-    double H = compensate_humidity(adc_H);
+    // Temperature must be compensated first: it sets t_fine for the others
+    out->temperature_c = compensate_temp(adc_T);
+    out->pressure_hpa = compensate_pressure(adc_P);
+    out->humidity_pct = compensate_humidity(adc_H);
+    return BME280_OK;
+}
 
-    printf("Temperature: %.2f °C\nPressure: %.2f hPa\nHumidity: %.2f %%\n", T, P, H);
+uint8_t bme280_chip_id(void) {
+    return fd >= 0 ? chip_id : 0;
+}
 
-    close(fd);
+void bme280_close(void) {
+    if(fd >= 0) close(fd);
+    fd = -1;
+    chip_id = 0;
+}
+
+// ---------------- Main ----------------
+// Built as a standalone CLI by default; the shared library build defines BME280_NO_MAIN.
+#ifndef BME280_NO_MAIN
+int main(int argc, char **argv) {
+    const char *device = argc > 1 ? argv[1] : BME280_DEFAULT_DEVICE;
+
+    int rc = bme280_init(device, BME280_DEFAULT_SPEED);
+    switch(rc) {
+        case BME280_OK: break;
+        case BME280_ERR_OPEN: perror("SPI open"); return 1;
+        case BME280_ERR_CHIP_ID: printf("Unexpected chip ID\n"); return 1;
+        case BME280_ERR_CALIB: perror("Calibration"); return 1;
+        default: perror("SPI"); return 1;
+    }
+    printf("BME280 Chip ID: 0x%02X\n", bme280_chip_id());
+
+    sleep(1);
+
+    bme280_reading r;
+    if(bme280_read(&r) < 0) { perror("SPI read data"); bme280_close(); return 1; }
+
+    printf("Temperature: %.2f °C\nPressure: %.2f hPa\nHumidity: %.2f %%\n",
+           r.temperature_c, r.pressure_hpa, r.humidity_pct);
+
+    bme280_close();
     return 0;
 }
+#endif
