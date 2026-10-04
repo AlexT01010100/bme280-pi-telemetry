@@ -20,6 +20,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build (x86_64)
         run: make -B CFLAGS="-O2 -Wall -Wextra -Werror"
+      - name: Unit tests (calibration + compensation)
+        run: make test CFLAGS="-O2 -Wall -Wextra -Werror"
       - name: Build (aarch64 / Raspberry Pi)
         run: make -B CC=aarch64-linux-gnu-gcc CFLAGS="-O2 -Wall -Wextra -Werror"
 

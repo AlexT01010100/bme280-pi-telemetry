@@ -67,9 +67,9 @@ static int spi_write_byte(uint8_t reg, uint8_t val) {
 }
 
 // ---------------- Calibration ----------------
-static int read_calibration(void) {
-    uint8_t buf[26];
-    if(spi_read_bytes(0x88, buf, 26) < 0) return -1;
+// buf = registers 0x88..0xA1, buf_h = registers 0xE1..0xE7.
+// Kept separate from the SPI reads so it can be unit-tested without hardware.
+static void parse_calibration(const uint8_t buf[26], const uint8_t buf_h[7]) {
     calib.dig_T1 = (buf[1]<<8)|buf[0];
     calib.dig_T2 = (int16_t)((buf[3]<<8)|buf[2]);
     calib.dig_T3 = (int16_t)((buf[5]<<8)|buf[4]);
@@ -84,14 +84,19 @@ static int read_calibration(void) {
     calib.dig_P9 = (int16_t)((buf[23]<<8)|buf[22]);
     calib.dig_H1 = buf[25];
 
-    uint8_t buf_h[7];
-    if(spi_read_bytes(0xE1, buf_h, 7) < 0) return -1;
     calib.dig_H2 = (int16_t)((buf_h[1]<<8)|buf_h[0]);
     calib.dig_H3 = buf_h[2];
     // H4/H5 are signed 12-bit: the MSB bytes (0xE4, 0xE6) carry the sign
     calib.dig_H4 = (int16_t)(((int8_t)buf_h[3] * 16) | (buf_h[4] & 0x0F));
     calib.dig_H5 = (int16_t)(((int8_t)buf_h[5] * 16) | (buf_h[4] >> 4));
     calib.dig_H6 = (int8_t)buf_h[6];
+}
+
+static int read_calibration(void) {
+    uint8_t buf[26], buf_h[7];
+    if(spi_read_bytes(0x88, buf, 26) < 0) return -1;
+    if(spi_read_bytes(0xE1, buf_h, 7) < 0) return -1;
+    parse_calibration(buf, buf_h);
     return 0;
 }
 

@@ -1,7 +1,7 @@
 CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra
 
-.PHONY: all clean
+.PHONY: all clean test
 
 all: bme280_spi libbme280.so
 
@@ -13,5 +13,12 @@ bme280_spi: bme280_spi.c bme280.h
 libbme280.so: bme280_spi.c bme280.h
 	$(CC) $(CFLAGS) -fPIC -shared -DBME280_NO_MAIN -o $@ bme280_spi.c
 
+# Hardware-free unit tests for calibration parsing and compensation
+tests/test_compensation: tests/test_compensation.c bme280_spi.c bme280.h
+	$(CC) $(CFLAGS) -o $@ tests/test_compensation.c -lm
+
+test: tests/test_compensation
+	./tests/test_compensation
+
 clean:
-	rm -f bme280_spi libbme280.so
+	rm -f bme280_spi libbme280.so tests/test_compensation
