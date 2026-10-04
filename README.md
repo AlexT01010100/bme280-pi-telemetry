@@ -4,10 +4,27 @@
 
 Raspberry Pi 5 + Adafruit BME280 (SPI) → C driver → FastAPI service → Postgres → web dashboard.
 
+![Live dashboard showing temperature, pressure and humidity from the sensor](docs/dashboard.png)
+
+```mermaid
+flowchart LR
+    subgraph pi["Raspberry Pi 5"]
+        sensor["BME280<br/>sensor"] -- "SPI<br/>/dev/spidev0.0" --> driver["C driver<br/>libbme280.so"]
+        driver -- ctypes --> sampler["FastAPI service<br/>sampler + REST API"]
+        sampler -- "insert / query" --> db[("PostgreSQL")]
+        sampler -- "JSON" --> dash["Web dashboard"]
+    end
+    subgraph gh["GitHub"]
+        ci["Actions CI<br/>build · test · arm64 image"] --> ghcr["GHCR<br/>container image"]
+    end
+    ghcr -. "pull (deploy/update.sh)" .-> sampler
+```
+
 ```
 bme280_spi.c / bme280.h   C driver (SPI, calibration, compensation)
   ├─ ./bme280_spi          standalone CLI  (make bme280_spi)
   └─ libbme280.so          shared library  (make libbme280.so)  ← loaded by Python via ctypes
+tests/                     C unit tests for calibration + compensation (make test)
 service/
   app/driver.py            ctypes bindings + mock sensor
   app/sampler.py           background loop: read sensor every N s → insert into Postgres
@@ -76,6 +93,16 @@ All settings are `BME_*` environment variables; see `service/.env.example`.
 
 ## Tests
 
+**C driver** (no hardware needed): checks calibration parsing, including the
+signed H4/H5 fields, the Bosch datasheet worked example, and agreement with the
+datasheet's floating-point formulas across the sensor's full operating range.
+
+```bash
+make test
+```
+
+**Service:**
+
 ```bash
 cd service
 TEST_DATABASE_URL=postgresql+asyncpg://bme:bme@localhost:5432/telemetry pytest
@@ -89,7 +116,7 @@ Note: the test suite truncates the `readings` table, so point it at a separate d
 
 Every push and pull request runs [CI](.github/workflows/ci.yml):
 
-1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi).
+1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi) and runs the C unit tests.
 2. **Service tests**: builds `libbme280.so` and runs pytest against Postgres, including the ctypes binding tests.
 3. **Docker image**: builds for `linux/arm64` and `linux/amd64`. On `main` (and `v*` tags) it is published to
    `ghcr.io/alext01010100/bme280-pi-telemetry`; pull requests build it without publishing.
@@ -104,6 +131,8 @@ crontab -e                                                # or check every 15 mi
 ```
 
 ## Wiring
+
+<img src="docs/hardware.jpg" alt="Raspberry Pi 5 wired to an Adafruit BME280 breakout on a breadboard over SPI" width="360">
 
 SPI0 on the Pi 5 header, sensor CS on CE0 (`/dev/spidev0.0`). If you wired CS to
 CE1, set `BME_SPI_DEVICE=/dev/spidev0.1`.
