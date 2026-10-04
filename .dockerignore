@@ -1,0 +1,6 @@
+**/__pycache__
+**/.venv
+**/.pytest_cache
+**/.env
+bme280_spi
+libbme280.so

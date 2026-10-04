@@ -1,0 +1,40 @@
+# On the Pi:            docker compose up -d --build
+# Off the Pi (no SPI):  BME_DRIVER=mock docker compose up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bme
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bme}
+      POSTGRES_DB: telemetry
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bme -d telemetry"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BME_DATABASE_URL: postgresql+asyncpg://bme:${POSTGRES_PASSWORD:-bme}@db:5432/telemetry
+      BME_DRIVER: ${BME_DRIVER:-native}
+      BME_SPI_DEVICE: ${BME_SPI_DEVICE:-/dev/spidev0.0}
+      BME_SAMPLE_INTERVAL_S: ${BME_SAMPLE_INTERVAL_S:-10}
+      BME_RETENTION_DAYS: ${BME_RETENTION_DAYS:-30}
+    # Pass the SPI bus through to the container. Comment this out when running
+    # with BME_DRIVER=mock on a machine that has no /dev/spidev0.0.
+    devices:
+      - ${BME_SPI_DEVICE:-/dev/spidev0.0}:${BME_SPI_DEVICE:-/dev/spidev0.0}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

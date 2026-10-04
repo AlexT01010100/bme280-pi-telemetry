@@ -1,0 +1,21 @@
+# Native (non-Docker) install on the Pi. Replace <user> with your login
+# (and the path, if you cloned somewhere other than your home directory), then:
+#   sudo cp deploy/bme-telemetry.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bme-telemetry
+[Unit]
+Description=BME280 telemetry API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=<user>
+# The user must be in the "spi" group to open /dev/spidev0.0
+SupplementaryGroups=spi
+WorkingDirectory=/home/<user>/bme280-pi-telemetry/service
+EnvironmentFile=/home/<user>/bme280-pi-telemetry/service/.env
+ExecStart=/home/<user>/bme280-pi-telemetry/service/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
