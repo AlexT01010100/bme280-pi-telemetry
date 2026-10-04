@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BME280 Telemetry</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3f0;
+    --surface-1: #fcfcfb;
+    --border: #e4e2dc;
+    --grid: #ecebe7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7974;
+    --series-1: #2a78d6;
+    --series-1-wash: rgba(42, 120, 214, 0.10);
+    --good: #0f7a3d;
+    --good-bg: #e3f4e9;
+    --critical: #b42318;
+    --critical-bg: #fde8e6;
+    --warning: #8a5a00;
+    --warning-bg: #fdf1d8;
+    --accent-bg: #e8f1fc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border: #2e2e2b;
+      --grid: #272725;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e86;
+      --series-1: #3987e5;
+      --series-1-wash: rgba(57, 135, 229, 0.12);
+      --good: #5fd08d;
+      --good-bg: #16301f;
+      --critical: #ff8a80;
+      --critical-bg: #3a1714;
+      --warning: #f2c14e;
+      --warning-bg: #352a10;
+      --accent-bg: #1c2a3d;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --border: #2e2e2b;
+    --grid: #272725;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e86;
+    --series-1: #3987e5;
+    --series-1-wash: rgba(57, 135, 229, 0.12);
+    --good: #5fd08d;
+    --good-bg: #16301f;
+    --critical: #ff8a80;
+    --critical-bg: #3a1714;
+    --warning: #f2c14e;
+    --warning-bg: #352a10;
+    --accent-bg: #1c2a3d;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 48px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 20px; }
+  header h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  header .meta { color: var(--text-secondary); font-size: 13px; }
+  header .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  }
+  .pill svg { width: 14px; height: 14px; flex: none; }
+  .pill.ok { color: var(--good); background: var(--good-bg); }
+  .pill.bad { color: var(--critical); background: var(--critical-bg); }
+  .pill.wait { color: var(--warning); background: var(--warning-bg); }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+  .seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--text-primary); font-weight: 600; }
+  .btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer; text-decoration: none;
+  }
+  .btn:hover, .seg button:hover { border-color: var(--text-muted); }
+  .btn:disabled { opacity: 0.55; cursor: progress; }
+  .toolbar .spacer { flex: 1; }
+  #msg { font-size: 13px; color: var(--text-secondary); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; }
+  .tile { padding: 16px 18px; }
+  .tile .label { color: var(--text-secondary); font-size: 13px; font-weight: 550; }
+  .tile .value { font-size: 34px; font-weight: 650; letter-spacing: -0.02em; margin: 2px 0 8px; }
+  .tile .value .unit { font-size: 16px; font-weight: 500; color: var(--text-secondary); margin-left: 3px; }
+  .tile .range { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-muted); }
+  .tile .range b { color: var(--text-secondary); font-weight: 600; }
+
+  .charts { display: grid; gap: 12px; }
+  .chart { padding: 14px 16px 8px; }
+  .chart h2 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .chart h2 span { color: var(--text-muted); font-weight: 500; }
+  .plot { position: relative; height: 190px; }
+  .plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .plot .axis text { fill: var(--text-muted); font-size: 11px; }
+  .plot .gridline { stroke: var(--grid); stroke-width: 1; }
+  .plot .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .plot .area { fill: var(--series-1-wash); stroke: none; }
+  .plot .xhair { stroke: var(--text-muted); stroke-width: 1; }
+  .plot .dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+  .plot .empty { fill: var(--text-muted); font-size: 13px; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 2; white-space: nowrap;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12); padding: 6px 10px; font-size: 12.5px;
+  }
+  .tip .t { color: var(--text-secondary); }
+  .tip .v { font-weight: 650; }
+
+  details.table { margin-top: 12px; padding: 0; }
+  details.table summary { cursor: pointer; padding: 12px 16px; font-weight: 600; font-size: 14px; }
+  .tablewrap { overflow-x: auto; padding: 0 16px 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; }
+
+  @media (max-width: 520px) {
+    .tile .value { font-size: 28px; }
+    .plot { height: 160px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BME280 Telemetry</h1>
+    <span id="status" class="pill wait" role="status"></span>
+    <span class="spacer"></span>
+    <span class="meta" id="meta"></span>
+  </header>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Time range" id="range">
+      <button data-h="1">1h</button>
+      <button data-h="6">6h</button>
+      <button data-h="24">24h</button>
+      <button data-h="168">7d</button>
+      <button data-h="720">30d</button>
+    </div>
+    <span class="spacer"></span>
+    <span id="msg" aria-live="polite"></span>
+    <button class="btn" id="sample">Sample now</button>
+    <a class="btn" id="csv" href="/api/readings.csv">Export CSV</a>
+  </div>
+
+  <section class="tiles" id="tiles"></section>
+  <section class="charts" id="charts"></section>
+
+  <details class="card table">
+    <summary>Recent readings</summary>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Time</th><th>Temperature (°C)</th><th>Pressure (hPa)</th><th>Humidity (%)</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </details>
+</div>
+
+<script>
+const METRICS = [
+  { key: "temperature_c", label: "Temperature", unit: "°C", digits: 2 },
+  { key: "pressure_hpa",  label: "Pressure",    unit: "hPa", digits: 1 },
+  { key: "humidity_pct",  label: "Humidity",    unit: "%",  digits: 1 },
+];
+const ICONS = {
+  ok:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+  bad:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3.5v5.5M8 12v.5"/></svg>',
+  wait: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="5"/></svg>',
+};
+const NS = "http://www.w3.org/2000/svg";
+
+let hours = 24;
+try { hours = Number(localStorage.getItem("bme.hours")) || 24; } catch {}
+let series = null;      // last /series response
+let refreshMs = 10000;
+const charts = [];
+
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d) => (v == null ? "–" : v.toFixed(d));
+
+async function getJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch {}
+    const err = new Error(detail); err.status = res.status; throw err;
+  }
+  return res.json();
+}
+
+function timeLabel(d, spanH) {
+  if (spanH <= 24) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function fullTime(d) {
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// ---------- tiles ----------
+function buildTiles() {
+  $("tiles").innerHTML = METRICS.map((m) => `
+    <div class="card tile">
+      <div class="label">${m.label}</div>
+      <div class="value num"><span id="v-${m.key}">–</span><span class="unit">${m.unit}</span></div>
+      <div class="range num">
+        <span>min <b id="min-${m.key}">–</b></span>
+        <span>avg <b id="avg-${m.key}">–</b></span>
+        <span>max <b id="max-${m.key}">–</b></span>
+      </div>
+    </div>`).join("");
+}
+
+// ---------- charts ----------
+function niceTicks(lo, hi, n) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const raw = (hi - lo) / n;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw);
+  const start = Math.floor(lo / step) * step, end = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let v = start; v <= end + step / 2; v += step) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function buildCharts() {
+  const host = $("charts");
+  for (const m of METRICS) {
+    const card = document.createElement("div");
+    card.className = "card chart";
+    card.innerHTML = `<h2>${m.label} <span>${m.unit}</span></h2><div class="plot"></div>`;
+    host.appendChild(card);
+    const plot = card.querySelector(".plot");
+    const tip = document.createElement("div");
+    tip.className = "tip"; tip.hidden = true;
+    plot.appendChild(tip);
+    const c = { m, plot, tip, svg: null, geom: null };
+    plot.addEventListener("pointermove", (e) => hoverAll(e, c));
+    plot.addEventListener("pointerleave", () => charts.forEach(clearHover));
+    charts.push(c);
+  }
+  new ResizeObserver(() => renderCharts()).observe(host);
+}
+
+function renderChart(c) {
+  const { m, plot } = c;
+  if (c.svg) c.svg.remove();
+  const W = plot.clientWidth, H = plot.clientHeight;
+  const pad = { l: 48, r: 12, t: 10, b: 22 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${m.label} over the last ${hours} hours` });
+  plot.insertBefore(svg, c.tip);
+  c.svg = svg;
+
+  const pts = (series?.points || []).map((p) => ({ t: new Date(p.ts).getTime(), v: p[m.key] }));
+  const t0 = series ? new Date(series.start).getTime() : Date.now() - hours * 3600e3;
+  const t1 = series ? new Date(series.end).getTime() : Date.now();
+  if (!pts.length) {
+    el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "empty" }, svg).textContent = "No data in this range yet";
+    c.geom = null;
+    return;
+  }
+
+  const vals = pts.map((p) => p.v);
+  const ticks = niceTicks(Math.min(...vals), Math.max(...vals), 4);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const x = (t) => pad.l + ((t - t0) / (t1 - t0)) * (W - pad.l - pad.r);
+  const y = (v) => H - pad.b - ((v - y0) / (y1 - y0)) * (H - pad.t - pad.b);
+
+  const axis = el("g", { class: "axis" }, svg);
+  const tickDigits = Math.max(0, -Math.floor(Math.log10(ticks[1] - ticks[0] || 1)));
+  for (const v of ticks) {
+    el("line", { class: "gridline", x1: pad.l, x2: W - pad.r, y1: y(v), y2: y(v) }, axis);
+    el("text", { x: pad.l - 8, y: y(v) + 4, "text-anchor": "end", class: "num" }, axis).textContent = v.toFixed(tickDigits);
+  }
+  const nx = Math.max(2, Math.floor((W - pad.l - pad.r) / 110));
+  for (let i = 0; i <= nx; i++) {
+    const t = t0 + ((t1 - t0) * i) / nx;
+    el("text", { x: x(t), y: H - 4, "text-anchor": i === 0 ? "start" : i === nx ? "end" : "middle" }, axis)
+      .textContent = timeLabel(new Date(t), hours);
+  }
+
+  // Break the line where the sensor was offline (gap > 3 buckets)
+  const gap = (series.bucket_s || 60) * 3000;
+  const segs = [[]];
+  pts.forEach((p, i) => {
+    if (i && p.t - pts[i - 1].t > gap) segs.push([]);
+    segs[segs.length - 1].push(p);
+  });
+  for (const s of segs) {
+    const d = s.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+    if (s.length > 1) {
+      el("path", { class: "area", d: `${d}L${x(s[s.length - 1].t).toFixed(1)},${y(y0)}L${x(s[0].t).toFixed(1)},${y(y0)}Z` }, svg);
+    }
+    el("path", { class: "line", d: s.length > 1 ? d : `${d}l0.01,0` }, svg);
+  }
+  const last = pts[pts.length - 1];
+  el("circle", { class: "dot", cx: x(last.t), cy: y(last.v), r: 4 }, svg);
+
+  const xhair = el("line", { class: "xhair", y1: pad.t, y2: H - pad.b, visibility: "hidden" }, svg);
+  const hdot = el("circle", { class: "dot", r: 5, visibility: "hidden" }, svg);
+  c.geom = { pts, x, y, xhair, hdot, W, pad, t0, t1 };
+}
+
+function renderCharts() { charts.forEach(renderChart); }
+
+// Crosshair is synced across all three charts on the same timestamp.
+function hoverAll(e, src) {
+  if (!src.geom) return;
+  const rect = src.plot.getBoundingClientRect();
+  const g = src.geom;
+  const px = e.clientX - rect.left;
+  const t = g.t0 + ((px - g.pad.l) / (g.W - g.pad.l - g.pad.r)) * (g.t1 - g.t0);
+  for (const c of charts) showHover(c, t, c === src);
+}
+
+function showHover(c, t, withTip) {
+  const g = c.geom;
+  if (!g) return;
+  let best = g.pts[0];
+  for (const p of g.pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+  const cx = g.x(best.t), cy = g.y(best.v);
+  g.xhair.setAttribute("x1", cx); g.xhair.setAttribute("x2", cx); g.xhair.setAttribute("visibility", "visible");
+  g.hdot.setAttribute("cx", cx); g.hdot.setAttribute("cy", cy); g.hdot.setAttribute("visibility", "visible");
+  if (!withTip) { c.tip.hidden = true; return; }
+  c.tip.innerHTML = `<div class="t">${fullTime(new Date(best.t))}</div><div class="v num">${fmt(best.v, c.m.digits)} ${c.m.unit}</div>`;
+  c.tip.hidden = false;
+  const tw = c.tip.offsetWidth;
+  const left = cx + 12 + tw > g.W ? cx - 12 - tw : cx + 12;
+  c.tip.style.left = `${left}px`;
+  c.tip.style.top = `${Math.max(0, cy - 44)}px`;
+}
+
+function clearHover(c) {
+  c.tip.hidden = true;
+  if (!c.geom) return;
+  c.geom.xhair.setAttribute("visibility", "hidden");
+  c.geom.hdot.setAttribute("visibility", "hidden");
+}
+
+// ---------- data ----------
+function setStatus(kind, text) {
+  const s = $("status");
+  s.className = `pill ${kind}`;
+  s.innerHTML = `${ICONS[kind]}<span>${text}</span>`;
+}
+
+async function loadHealth() {
+  try {
+    const h = await getJSON("/api/health");
+    refreshMs = Math.max(5000, h.sample_interval_s * 1000);
+    if (h.status === "ok" && h.sensor.last_ok_at) setStatus("ok", "Sensor online");
+    else if (!h.database) setStatus("bad", "Database unreachable");
+    else if (h.sensor.last_error) setStatus("bad", "Sensor error");
+    else setStatus("wait", "Waiting for first reading");
+    $("status").title = h.sensor.last_error || "";
+    const chip = h.sensor.chip_id ? ` · chip ${h.sensor.chip_id}` : "";
+    $("meta").textContent = `driver: ${h.sensor.driver}${chip} · every ${h.sample_interval_s}s`;
+  } catch (e) {
+    setStatus("bad", "Service unreachable");
+  }
+}
+
+async function loadLatest() {
+  try {
+    const r = await getJSON("/api/readings/latest");
+    for (const m of METRICS) $(`v-${m.key}`).textContent = fmt(r[m.key], m.digits);
+    $("msg").textContent = `Updated ${new Date(r.ts).toLocaleTimeString()}`;
+  } catch (e) {
+    if (e.status !== 404) $("msg").textContent = `Latest: ${e.message}`;
+  }
+}
+
+async function loadRange() {
+  try {
+    const [s, st, raw] = await Promise.all([
+      getJSON(`/api/readings/series?hours=${hours}&points=400`),
+      getJSON(`/api/readings/stats?hours=${hours}`),
+      getJSON(`/api/readings?limit=50`),
+    ]);
+    series = s;
+    for (const m of METRICS) {
+      for (const k of ["min", "avg", "max"]) $(`${k}-${m.key}`).textContent = fmt(st[m.key][k], m.digits);
+    }
+    $("rows").innerHTML = raw.map((r) => `<tr class="num"><td>${fullTime(new Date(r.ts))}</td>` +
+      METRICS.map((m) => `<td>${fmt(r[m.key], m.digits)}</td>`).join("") + "</tr>").join("");
+    renderCharts();
+  } catch (e) {
+    $("msg").textContent = `Load failed: ${e.message}`;
+  }
+}
+
+function setRange(h) {
+  hours = h;
+  try { localStorage.setItem("bme.hours", String(h)); } catch {}
+  for (const b of $("range").querySelectorAll("button")) b.setAttribute("aria-pressed", String(Number(b.dataset.h) === h));
+  $("csv").href = `/api/readings.csv?hours=${h}`;
+  loadRange();
+}
+
+$("range").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) setRange(Number(b.dataset.h));
+});
+
+$("sample").addEventListener("click", async () => {
+  const btn = $("sample");
+  btn.disabled = true;
+  try {
+    await getJSON("/api/readings/sample", { method: "POST" });
+    await Promise.all([loadLatest(), loadRange(), loadHealth()]);
+  } catch (e) {
+    $("msg").textContent = `Sample failed: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function tick() {
+  await Promise.all([loadHealth(), loadLatest()]);
+  setTimeout(tick, refreshMs);
+}
+
+buildTiles();
+buildCharts();
+setStatus("wait", "Connecting…");
+setRange(hours);
+tick();
+setInterval(loadRange, 30000);
+</script>
+</body>
+</html>
