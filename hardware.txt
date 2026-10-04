@@ -1,0 +1,6 @@
+Raspberry Pi 5 — 4 GB
+Raspberry Pi OS
+Adafruit BME280 breakout — Product 2652
+Breadboard
+Jumper wires
+Sensor has soldered header pins
