@@ -180,7 +180,7 @@
     <summary>Recent readings</summary>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Time</th><th>Temperature (°C)</th><th>Pressure (hPa)</th><th>Humidity (%)</th></tr></thead>
+        <thead><tr><th>Time</th><th>Temperature (°F)</th><th>Pressure (hPa)</th><th>Humidity (%)</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -189,7 +189,8 @@
 
 <script>
 const METRICS = [
-  { key: "temperature_c", label: "Temperature", unit: "°C", digits: 2 },
+  // The API stores Celsius (what the sensor reports); convert for display only.
+  { key: "temperature_c", label: "Temperature", unit: "°F", digits: 1, convert: (c) => c * 9 / 5 + 32 },
   { key: "pressure_hpa",  label: "Pressure",    unit: "hPa", digits: 1 },
   { key: "humidity_pct",  label: "Humidity",    unit: "%",  digits: 1 },
 ];
@@ -208,6 +209,7 @@ const charts = [];
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v, d) => (v == null ? "–" : v.toFixed(d));
+const display = (m, v) => (v == null || !m.convert ? v : m.convert(v));
 
 async function getJSON(url, opts) {
   const res = await fetch(url, opts);
@@ -288,7 +290,7 @@ function renderChart(c) {
   plot.insertBefore(svg, c.tip);
   c.svg = svg;
 
-  const pts = (series?.points || []).map((p) => ({ t: new Date(p.ts).getTime(), v: p[m.key] }));
+  const pts = (series?.points || []).map((p) => ({ t: new Date(p.ts).getTime(), v: display(m, p[m.key]) }));
   const t0 = series ? new Date(series.start).getTime() : Date.now() - hours * 3600e3;
   const t1 = series ? new Date(series.end).getTime() : Date.now();
   if (!pts.length) {
@@ -400,7 +402,7 @@ async function loadHealth() {
 async function loadLatest() {
   try {
     const r = await getJSON("/api/readings/latest");
-    for (const m of METRICS) $(`v-${m.key}`).textContent = fmt(r[m.key], m.digits);
+    for (const m of METRICS) $(`v-${m.key}`).textContent = fmt(display(m, r[m.key]), m.digits);
     $("msg").textContent = `Updated ${new Date(r.ts).toLocaleTimeString()}`;
   } catch (e) {
     if (e.status !== 404) $("msg").textContent = `Latest: ${e.message}`;
@@ -416,10 +418,10 @@ async function loadRange() {
     ]);
     series = s;
     for (const m of METRICS) {
-      for (const k of ["min", "avg", "max"]) $(`${k}-${m.key}`).textContent = fmt(st[m.key][k], m.digits);
+      for (const k of ["min", "avg", "max"]) $(`${k}-${m.key}`).textContent = fmt(display(m, st[m.key][k]), m.digits);
     }
     $("rows").innerHTML = raw.map((r) => `<tr class="num"><td>${fullTime(new Date(r.ts))}</td>` +
-      METRICS.map((m) => `<td>${fmt(r[m.key], m.digits)}</td>`).join("") + "</tr>").join("");
+      METRICS.map((m) => `<td>${fmt(display(m, r[m.key]), m.digits)}</td>`).join("") + "</tr>").join("");
     renderCharts();
   } catch (e) {
     $("msg").textContent = `Load failed: ${e.message}`;
