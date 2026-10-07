@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml)
 
-Raspberry Pi 5 + Adafruit BME280 (SPI) → C driver → FastAPI service → Postgres → web dashboard.
+Raspberry Pi 5 + Adafruit BME280 (SPI) + MH-Z19 CO₂ sensor (UART) → FastAPI service → Postgres → web dashboard.
 
 ![Live dashboard showing temperature, pressure and humidity from the sensor](docs/dashboard.png)
 
@@ -11,6 +11,7 @@ flowchart LR
     subgraph pi["Raspberry Pi 5"]
         sensor["BME280<br/>sensor"] -- "SPI<br/>/dev/spidev0.0" --> driver["C driver<br/>libbme280.so"]
         driver -- ctypes --> sampler["FastAPI service<br/>sampler + REST API"]
+        co2["MH-Z19<br/>CO₂ sensor"] -- "UART<br/>/dev/ttyAMA0" --> sampler
         sampler -- "insert / query" --> db[("PostgreSQL")]
         sampler -- "JSON" --> dash["Web dashboard"]
     end
@@ -26,10 +27,11 @@ bme280_spi.c / bme280.h   C driver (SPI, calibration, compensation)
   └─ libbme280.so          shared library  (make libbme280.so)  ← loaded by Python via ctypes
 tests/                     C unit tests for calibration + compensation (make test)
 service/
-  app/driver.py            ctypes bindings + mock sensor
+  app/driver.py            ctypes bindings, MH-Z19 serial driver, mock sensors
   app/sampler.py           background loop: read sensor every N s → insert into Postgres
   app/api.py               REST API
   app/static/index.html    dashboard (no external dependencies; works offline)
+co2.py                     standalone CO2 sensor check (python3 co2.py)
 docker-compose.yml         Postgres + API
 deploy/                    systemd unit for a non-Docker install
 ```
@@ -37,11 +39,14 @@ deploy/                    systemd unit for a non-Docker install
 ## Quick start on the Pi (Docker)
 
 ```bash
-sudo raspi-config nonint do_spi 0     # enable SPI once, then reboot
+sudo raspi-config nonint do_spi 0     # enable SPI once
+# for the CO2 sensor: add dtparam=uart0=on to /boot/firmware/config.txt,
+# and turn off the serial login console (raspi-config → Interface Options → Serial Port), then reboot
 git clone https://github.com/AlexT01010100/bme280-pi-telemetry.git
 cd bme280-pi-telemetry
 make                                  # optional: builds the CLI + .so locally
 ./bme280_spi                          # sanity-check the wiring
+python3 co2.py                        # ...and the CO2 sensor (needs python3-serial)
 docker compose pull && docker compose up -d   # or: docker compose up -d --build
 ```
 
@@ -63,21 +68,21 @@ To run it at boot, use `deploy/bme-telemetry.service`.
 
 ## Developing off the Pi
 
-Set `BME_DRIVER=mock` to generate synthetic readings. The mock is never used
+Set `BME_DRIVER=mock` (and `BME_CO2_DRIVER=mock`) to generate synthetic readings. The mock is never used
 automatically: in `native` mode a missing library or sensor is reported as an
 error, so fake data cannot end up in a production database.
 
 ```bash
 docker run -d --name pg -p 5432:5432 -e POSTGRES_USER=bme -e POSTGRES_PASSWORD=bme -e POSTGRES_DB=telemetry postgres:16-alpine
 cd service && pip install -r requirements-dev.txt
-BME_DRIVER=mock uvicorn app.main:app --reload
+BME_DRIVER=mock BME_CO2_DRIVER=mock uvicorn app.main:app --reload
 ```
 
 ## API
 
 | Method | Path | |
 |---|---|---|
-| GET  | `/api/health` | DB + sensor status, last error, chip ID |
+| GET  | `/api/health` | DB + sensor status (BME280 and CO₂), last error, chip ID |
 | GET  | `/api/readings/latest` | most recent stored reading |
 | GET  | `/api/readings?start=&end=&limit=` | raw readings, newest first |
 | GET  | `/api/readings/series?hours=24&points=300` | time-bucketed averages for charts |
@@ -146,6 +151,21 @@ CE1, set `BME_SPI_DEVICE=/dev/spidev0.1`.
 | SDI | MOSI / GPIO10 (pin 19) |
 | CS  | CE0 / GPIO8 (pin 24) |
 
+The MH-Z19 CO₂ sensor uses the header UART. On a Pi 5 that is `/dev/ttyAMA0`
+after `dtparam=uart0=on`. `/dev/serial0` points at the separate debug
+connector (`ttyAMA10`), so don't use it. TX and RX cross over:
+
+| MH-Z19 | Pi pin |
+|---|---|
+| Vin | 5V (pin 2) |
+| GND | GND (pin 14) |
+| TX  | RXD / GPIO15 (pin 10) |
+| RX  | TXD / GPIO14 (pin 8) |
+
+The CO₂ sensor is optional (`BME_CO2_DRIVER=none` turns it off). If it fails,
+BME280 readings are still stored with `co2_ppm` empty, and `/api/health`
+reports the CO₂ error. Readings take about 3 minutes to settle after power-on.
+
 ## Behaviour notes
 
 - **Error recovery:** if a read fails, the C device is closed and initialised
@@ -153,6 +173,7 @@ CE1, set `BME_SPI_DEVICE=/dev/spidev0.1`.
   without restarting the service.
 - **Sanity checks:** readings outside the BME280's rated range (−40–85 °C,
   300–1100 hPa, 0–100 %) are rejected as bad SPI reads instead of being stored.
+  CO₂ frames are checksum-verified, and values above 10 000 ppm are rejected.
 - **Retention:** rows older than `BME_RETENTION_DAYS` are pruned every hour.
 
 ## Contributing

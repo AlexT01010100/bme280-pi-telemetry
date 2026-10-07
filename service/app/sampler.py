@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .config import Settings
 from .db import ReadingRow
-from .driver import Sensor, SensorError
+from .driver import Co2Sensor, Sensor, SensorError
 
 log = logging.getLogger(__name__)
 
@@ -18,14 +18,37 @@ PRUNE_EVERY_S = 3600
 class Sampler:
     """Polls the sensor on a fixed interval and stores each reading."""
 
-    def __init__(self, sensor: Sensor, sessions: async_sessionmaker, settings: Settings):
+    def __init__(
+        self, sensor: Sensor, sessions: async_sessionmaker, settings: Settings, co2: Co2Sensor | None = None
+    ):
         self.sensor = sensor
+        self.co2 = co2
         self.sessions = sessions
         self.settings = settings
         self.last_ok_at: datetime | None = None
         self.last_error: str | None = None
         self.consecutive_errors = 0
+        self.co2_last_ok_at: datetime | None = None
+        self.co2_last_error: str | None = None
+        self.co2_consecutive_errors = 0
         self._last_prune = 0.0
+
+    async def _read_co2(self) -> float | None:
+        """CO2 is optional: a failed read is recorded, and the row is stored with co2_ppm NULL."""
+        if self.co2 is None:
+            return None
+        try:
+            ppm = await asyncio.to_thread(self.co2.read)
+        except SensorError as e:
+            self.co2_last_error = str(e)
+            self.co2_consecutive_errors += 1
+            if self.co2_consecutive_errors == 1 or self.co2_consecutive_errors % 30 == 0:
+                log.warning("co2 read failed (%d in a row): %s", self.co2_consecutive_errors, e)
+            return None
+        self.co2_last_ok_at = datetime.now(timezone.utc)
+        self.co2_last_error = None
+        self.co2_consecutive_errors = 0
+        return float(ppm)
 
     async def sample_once(self) -> ReadingRow:
         # The C driver blocks on ioctl/usleep, so keep it off the event loop.
@@ -35,6 +58,7 @@ class Sampler:
             self.last_error = str(e)
             self.consecutive_errors += 1
             raise
+        co2_ppm = await self._read_co2()
 
         row = ReadingRow(
             ts=datetime.now(timezone.utc),
@@ -42,6 +66,7 @@ class Sampler:
             temperature_c=reading.temperature_c,
             pressure_hpa=reading.pressure_hpa,
             humidity_pct=reading.humidity_pct,
+            co2_ppm=co2_ppm,
         )
         async with self.sessions() as session:
             session.add(row)
@@ -63,7 +88,10 @@ class Sampler:
 
     async def run(self) -> None:
         interval = self.settings.sample_interval_s
-        log.info("sampler started: driver=%s interval=%.1fs", self.sensor.name, interval)
+        log.info(
+            "sampler started: driver=%s co2=%s interval=%.1fs",
+            self.sensor.name, self.co2.name if self.co2 else "none", interval,
+        )
         next_tick = time.monotonic()
         while True:
             try:

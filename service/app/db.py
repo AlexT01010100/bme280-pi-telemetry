@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, String, func
+from sqlalchemy import DateTime, Float, Index, String, func, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -18,6 +18,8 @@ class ReadingRow(Base):
     temperature_c: Mapped[float] = mapped_column(Float)
     pressure_hpa: Mapped[float] = mapped_column(Float)
     humidity_pct: Mapped[float] = mapped_column(Float)
+    # NULL when no CO2 sensor is configured or its read failed.
+    co2_ppm: Mapped[float | None] = mapped_column(Float)
 
     __table_args__ = (Index("ix_readings_sensor_ts", "sensor_id", "ts"),)
 
@@ -33,3 +35,5 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker:
 async def create_schema(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all doesn't add columns to a table that already exists.
+        await conn.execute(text("ALTER TABLE readings ADD COLUMN IF NOT EXISTS co2_ppm DOUBLE PRECISION"))

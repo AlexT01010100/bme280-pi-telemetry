@@ -9,8 +9,8 @@ Wants=network-online.target
 
 [Service]
 User=<user>
-# The user must be in the "spi" group to open /dev/spidev0.0
-SupplementaryGroups=spi
+# "spi" opens /dev/spidev0.0; "dialout" opens the CO2 sensor's /dev/ttyAMA0
+SupplementaryGroups=spi dialout
 WorkingDirectory=/home/<user>/bme280-pi-telemetry/service
 EnvironmentFile=/home/<user>/bme280-pi-telemetry/service/.env
 ExecStart=/home/<user>/bme280-pi-telemetry/service/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000

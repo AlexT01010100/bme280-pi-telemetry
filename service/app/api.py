@@ -8,17 +8,21 @@ from sqlalchemy import func, literal_column, select, text
 
 from .db import ReadingRow
 from .driver import SensorError
-from .schemas import FieldStats, Health, ReadingOut, SensorHealth, Series, SeriesPoint, Stats
+from .schemas import Co2Health, FieldStats, Health, ReadingOut, SensorHealth, Series, SeriesPoint, Stats
 
 router = APIRouter(prefix="/api")
 
-FIELDS = ("temperature_c", "pressure_hpa", "humidity_pct")
+FIELDS = ("temperature_c", "pressure_hpa", "humidity_pct", "co2_ppm")
 MAX_HOURS = 24 * 365
 
 
 def _window(hours: float) -> tuple[datetime, datetime]:
     end = datetime.now(timezone.utc)
     return end - timedelta(hours=hours), end
+
+
+def _round(v) -> float | None:
+    return None if v is None else round(float(v), 2)
 
 
 def _sensor(request: Request, sensor_id: str | None) -> str:
@@ -38,7 +42,15 @@ async def health(request: Request):
     sampler = state.sampler
     task = state.sampler_task
     chip = sampler.sensor.chip_id()
-    sensor_ok = sampler.last_error is None
+    sensor_ok = sampler.last_error is None and sampler.co2_last_error is None
+    co2 = None
+    if sampler.co2 is not None:
+        co2 = Co2Health(
+            driver=sampler.co2.name,
+            last_ok_at=sampler.co2_last_ok_at,
+            last_error=sampler.co2_last_error,
+            consecutive_errors=sampler.co2_consecutive_errors,
+        )
     return Health(
         status="ok" if db_ok and sensor_ok else "degraded",
         database=db_ok,
@@ -50,6 +62,7 @@ async def health(request: Request):
             last_error=sampler.last_error,
             consecutive_errors=sampler.consecutive_errors,
         ),
+        co2=co2,
         sample_interval_s=state.settings.sample_interval_s,
     )
 
@@ -131,11 +144,9 @@ async def series(
         points=[
             SeriesPoint(
                 ts=datetime.fromtimestamp(float(b), timezone.utc),
-                temperature_c=round(float(t), 2),
-                pressure_hpa=round(float(p), 2),
-                humidity_pct=round(float(h), 2),
+                **{f: _round(v) for f, v in zip(FIELDS, vals)},
             )
-            for b, t, p, h in rows
+            for b, *vals in rows
         ],
     )
 
@@ -158,8 +169,7 @@ async def stats(
 
     def field(i: int) -> FieldStats:
         lo, hi, avg = row[1 + 3 * i : 4 + 3 * i]
-        r = lambda v: None if v is None else round(float(v), 2)  # noqa: E731
-        return FieldStats(min=r(lo), max=r(hi), avg=r(avg))
+        return FieldStats(min=_round(lo), max=_round(hi), avg=_round(avg))
 
     return Stats(
         sensor_id=sid,
@@ -192,7 +202,7 @@ async def export_csv(
                 .execution_options(yield_per=1000)
             )
             async for r in result:
-                writer.writerow([r.ts.isoformat(), r.sensor_id, r.temperature_c, r.pressure_hpa, r.humidity_pct])
+                writer.writerow([r.ts.isoformat(), r.sensor_id, *(getattr(r, f) for f in FIELDS)])
                 if buf.tell() > 64_000:
                     yield buf.getvalue()
                     buf.seek(0)

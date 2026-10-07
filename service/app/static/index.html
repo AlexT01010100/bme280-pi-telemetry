@@ -180,7 +180,7 @@
     <summary>Recent readings</summary>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Time</th><th>Temperature (°F)</th><th>Pressure (hPa)</th><th>Humidity (%)</th></tr></thead>
+        <thead><tr><th>Time</th><th>Temperature (°F)</th><th>Pressure (hPa)</th><th>Humidity (%)</th><th>CO₂ (ppm)</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -193,6 +193,7 @@ const METRICS = [
   { key: "temperature_c", label: "Temperature", unit: "°F", digits: 1, convert: (c) => c * 9 / 5 + 32 },
   { key: "pressure_hpa",  label: "Pressure",    unit: "hPa", digits: 1 },
   { key: "humidity_pct",  label: "Humidity",    unit: "%",  digits: 1 },
+  { key: "co2_ppm",       label: "CO₂",         unit: "ppm", digits: 0 },
 ];
 const ICONS = {
   ok:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5l3 3 6-7"/></svg>',
@@ -290,7 +291,10 @@ function renderChart(c) {
   plot.insertBefore(svg, c.tip);
   c.svg = svg;
 
-  const pts = (series?.points || []).map((p) => ({ t: new Date(p.ts).getTime(), v: display(m, p[m.key]) }));
+  // CO2 is null in buckets where that sensor was absent or failed; those become line gaps.
+  const pts = (series?.points || [])
+    .map((p) => ({ t: new Date(p.ts).getTime(), v: display(m, p[m.key]) }))
+    .filter((p) => p.v != null);
   const t0 = series ? new Date(series.start).getTime() : Date.now() - hours * 3600e3;
   const t1 = series ? new Date(series.end).getTime() : Date.now();
   if (!pts.length) {
@@ -342,7 +346,7 @@ function renderChart(c) {
 
 function renderCharts() { charts.forEach(renderChart); }
 
-// Crosshair is synced across all three charts on the same timestamp.
+// Crosshair is synced across all charts on the same timestamp.
 function hoverAll(e, src) {
   if (!src.geom) return;
   const rect = src.plot.getBoundingClientRect();
@@ -390,10 +394,12 @@ async function loadHealth() {
     if (h.status === "ok" && h.sensor.last_ok_at) setStatus("ok", "Sensor online");
     else if (!h.database) setStatus("bad", "Database unreachable");
     else if (h.sensor.last_error) setStatus("bad", "Sensor error");
+    else if (h.co2?.last_error) setStatus("bad", "CO₂ sensor error");
     else setStatus("wait", "Waiting for first reading");
-    $("status").title = h.sensor.last_error || "";
+    $("status").title = [h.sensor.last_error, h.co2?.last_error].filter(Boolean).join("\n");
     const chip = h.sensor.chip_id ? ` · chip ${h.sensor.chip_id}` : "";
-    $("meta").textContent = `driver: ${h.sensor.driver}${chip} · every ${h.sample_interval_s}s`;
+    const co2 = h.co2 ? ` · CO₂: ${h.co2.driver}` : "";
+    $("meta").textContent = `driver: ${h.sensor.driver}${chip}${co2} · every ${h.sample_interval_s}s`;
   } catch (e) {
     setStatus("bad", "Service unreachable");
   }

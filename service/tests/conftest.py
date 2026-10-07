@@ -15,7 +15,9 @@ TEST_DB = os.environ.get("TEST_DATABASE_URL")
 def settings():
     if not TEST_DB:
         pytest.skip("TEST_DATABASE_URL not set")
-    return Settings(database_url=TEST_DB, driver="mock", sampler_enabled=False, sample_interval_s=10)
+    return Settings(
+        database_url=TEST_DB, driver="mock", co2_driver="mock", sampler_enabled=False, sample_interval_s=10
+    )
 
 
 @pytest.fixture

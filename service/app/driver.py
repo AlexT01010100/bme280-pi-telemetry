@@ -1,4 +1,4 @@
-"""Python bindings for the C BME280 driver (libbme280.so) plus a mock for development."""
+"""Python bindings for the C BME280 driver (libbme280.so), the MH-Z19 CO2 sensor, and mocks for development."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+import serial
 
 # Mirrors the return codes in bme280.h
 _ERRORS = {
@@ -152,3 +154,89 @@ def create_sensor(settings) -> Sensor:
     if settings.driver == "mock":
         return MockBME280()
     return NativeBME280(settings.lib_path, settings.spi_device, settings.spi_speed_hz)
+
+
+# ---------- CO2 (MH-Z19 family, UART 9600 8N1) ----------
+
+_MHZ19_READ_CMD = bytes([0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79])
+_CO2_RANGE = (0, 10_000)  # widest MH-Z19 variant; anything above is a garbled frame
+
+
+class Co2Sensor(Protocol):
+    name: str
+
+    def read(self) -> int: ...
+    def close(self) -> None: ...
+
+
+def mhz19_checksum(frame: bytes) -> int:
+    return (0x100 - (sum(frame[1:8]) & 0xFF)) & 0xFF
+
+
+def parse_mhz19(frame: bytes) -> int:
+    """Decode a 9-byte response to command 0x86 into ppm."""
+    if len(frame) != 9:
+        raise SensorError(f"got {len(frame)}/9 bytes - check TX/RX wiring and that the UART is enabled")
+    if frame[0] != 0xFF or frame[1] != 0x86:
+        raise SensorError(f"unexpected response {frame.hex()}")
+    if frame[8] != mhz19_checksum(frame):
+        raise SensorError(f"bad checksum in {frame.hex()}")
+    ppm = frame[2] << 8 | frame[3]
+    lo, hi = _CO2_RANGE
+    if not lo <= ppm <= hi:
+        raise SensorError(f"co2_ppm={ppm} outside sensor range [{lo}, {hi}]")
+    return ppm
+
+
+class MHZ19:
+    """MH-Z19 over a serial port. The port is reopened after any failure."""
+
+    name = "mhz19"
+
+    def __init__(self, device: str, timeout_s: float = 1.0):
+        self._device = device
+        self._timeout_s = timeout_s
+        self._lock = threading.Lock()
+        self._port: serial.Serial | None = None
+
+    def read(self) -> int:
+        with self._lock:
+            try:
+                if self._port is None:
+                    self._port = serial.Serial(self._device, 9600, timeout=self._timeout_s)
+                self._port.reset_input_buffer()  # drop any half frame from a previous timeout
+                self._port.write(_MHZ19_READ_CMD)
+                return parse_mhz19(self._port.read(9))
+            except (SensorError, OSError) as e:  # SerialException is an OSError
+                self._close()
+                raise SensorError(f"{self._device}: {e}") from e
+
+    def _close(self) -> None:
+        if self._port is not None:
+            self._port.close()
+            self._port = None
+
+    def close(self) -> None:
+        with self._lock:
+            self._close()
+
+
+class MockMHZ19:
+    """Indoor-ish CO2 that rises and falls over the day."""
+
+    name = "mock"
+
+    def read(self) -> int:
+        day = 2 * math.pi * (time.time() % 86400) / 86400
+        return round(700 + 250 * math.sin(day) + random.gauss(0, 15))
+
+    def close(self) -> None:
+        pass
+
+
+def create_co2_sensor(settings) -> Co2Sensor | None:
+    if settings.co2_driver == "none":
+        return None
+    if settings.co2_driver == "mock":
+        return MockMHZ19()
+    return MHZ19(settings.co2_serial_device)

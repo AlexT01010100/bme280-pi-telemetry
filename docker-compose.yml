@@ -1,6 +1,6 @@
 # On the Pi, using the image CI publishes:  docker compose pull && docker compose up -d
 # Building locally instead:                docker compose up -d --build
-# Off the Pi (no SPI):                     BME_DRIVER=mock docker compose up -d --build
+# Off the Pi (no SPI/UART):                BME_DRIVER=mock BME_CO2_DRIVER=mock docker compose up -d --build
 name: bme280-pi-telemetry
 
 services:
@@ -30,12 +30,16 @@ services:
       BME_DATABASE_URL: postgresql+asyncpg://bme:${POSTGRES_PASSWORD:-bme}@db:5432/telemetry
       BME_DRIVER: ${BME_DRIVER:-native}
       BME_SPI_DEVICE: ${BME_SPI_DEVICE:-/dev/spidev0.0}
+      BME_CO2_DRIVER: ${BME_CO2_DRIVER:-mhz19}
+      BME_CO2_SERIAL_DEVICE: ${BME_CO2_SERIAL_DEVICE:-/dev/ttyAMA0}
       BME_SAMPLE_INTERVAL_S: ${BME_SAMPLE_INTERVAL_S:-10}
       BME_RETENTION_DAYS: ${BME_RETENTION_DAYS:-30}
-    # Pass the SPI bus through to the container. Comment this out when running
-    # with BME_DRIVER=mock on a machine that has no /dev/spidev0.0.
+    # Pass the SPI bus and the CO2 sensor's UART through to the container.
+    # Comment out any line whose device doesn't exist on this machine (e.g.
+    # when running with the mock drivers, or with BME_CO2_DRIVER=none).
     devices:
       - ${BME_SPI_DEVICE:-/dev/spidev0.0}:${BME_SPI_DEVICE:-/dev/spidev0.0}
+      - ${BME_CO2_SERIAL_DEVICE:-/dev/ttyAMA0}:${BME_CO2_SERIAL_DEVICE:-/dev/ttyAMA0}
     ports:
       - "8000:8000"
     restart: unless-stopped

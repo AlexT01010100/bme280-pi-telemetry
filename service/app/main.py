@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import router
 from .config import Settings, get_settings
 from .db import create_schema, make_engine, make_sessionmaker
-from .driver import create_sensor
+from .driver import create_co2_sensor, create_sensor
 from .sampler import Sampler
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -28,10 +28,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await create_schema(engine)
         sessions = make_sessionmaker(engine)
         sensor = create_sensor(settings)
+        co2 = create_co2_sensor(settings)
 
         app.state.settings = settings
         app.state.sessions = sessions
-        app.state.sampler = Sampler(sensor, sessions, settings)
+        app.state.sampler = Sampler(sensor, sessions, settings, co2)
         app.state.sampler_task = (
             asyncio.create_task(app.state.sampler.run()) if settings.sampler_enabled else None
         )
@@ -43,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             sensor.close()
+            if co2:
+                co2.close()
             await engine.dispose()
 
     app = FastAPI(title="BME280 Telemetry", version="1.0.0", lifespan=lifespan)

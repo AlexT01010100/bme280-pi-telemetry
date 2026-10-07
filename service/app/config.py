@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     spi_device: str = "/dev/spidev0.0"
     spi_speed_hz: int = 500_000
 
+    # Optional MH-Z19-family CO2 sensor on the GPIO UART. "none" disables it.
+    # On a Pi 5 the header UART (pins 8/10) is /dev/ttyAMA0 once
+    # dtparam=uart0=on is set; /dev/serial0 points at the debug connector.
+    co2_driver: Literal["mhz19", "mock", "none"] = "none"
+    co2_serial_device: str = "/dev/ttyAMA0"
+
     sensor_id: str = "bme280-0"
     sample_interval_s: float = 10.0
     sampler_enabled: bool = True
