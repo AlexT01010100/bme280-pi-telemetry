@@ -48,7 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 co2.close()
             await engine.dispose()
 
-    app = FastAPI(title="BME280 Telemetry", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Indoor Air Monitor", version="1.0.0", lifespan=lifespan)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

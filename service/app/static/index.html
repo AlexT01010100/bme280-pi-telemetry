@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BME280 Telemetry</title>
+<title>Indoor Air Monitor</title>
 <style>
   :root {
     color-scheme: light;
@@ -153,7 +153,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>BME280 Telemetry</h1>
+    <h1>Indoor Air Monitor</h1>
     <span id="status" class="pill wait" role="status"></span>
     <span class="spacer"></span>
     <span class="meta" id="meta"></span>
@@ -391,15 +391,17 @@ async function loadHealth() {
   try {
     const h = await getJSON("/api/health");
     refreshMs = Math.max(5000, h.sample_interval_s * 1000);
-    if (h.status === "ok" && h.sensor.last_ok_at) setStatus("ok", "Sensor online");
+    if (h.status === "ok" && h.sensor.last_ok_at) setStatus("ok", h.co2 ? "Sensors online" : "Sensor online");
     else if (!h.database) setStatus("bad", "Database unreachable");
     else if (h.sensor.last_error) setStatus("bad", "Sensor error");
     else if (h.co2?.last_error) setStatus("bad", "CO₂ sensor error");
     else setStatus("wait", "Waiting for first reading");
     $("status").title = [h.sensor.last_error, h.co2?.last_error].filter(Boolean).join("\n");
-    const chip = h.sensor.chip_id ? ` · chip ${h.sensor.chip_id}` : "";
-    const co2 = h.co2 ? ` · CO₂: ${h.co2.driver}` : "";
-    $("meta").textContent = `driver: ${h.sensor.driver}${chip}${co2} · every ${h.sample_interval_s}s`;
+    // Driver and chip details stay in /api/health; the header just names the sensors.
+    const label = (name, driver) => (driver === "mock" ? `${name} (simulated)` : name);
+    const sensors = [label("BME280", h.sensor.driver)];
+    if (h.co2) sensors.push(label("MH-Z19", h.co2.driver));
+    $("meta").textContent = `${sensors.join(" + ")} · updates every ${h.sample_interval_s} s`;
   } catch (e) {
     setStatus("bad", "Service unreachable");
   }

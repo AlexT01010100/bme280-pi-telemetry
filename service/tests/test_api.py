@@ -125,7 +125,7 @@ async def test_prune_respects_retention(app):
 
 async def test_dashboard_served(client):
     r = await client.get("/")
-    assert r.status_code == 200 and "BME280 Telemetry" in r.text
+    assert r.status_code == 200 and "Indoor Air Monitor" in r.text
 
 
 def test_reading_validation_rejects_garbage():
