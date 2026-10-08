@@ -5,3 +5,6 @@ __pycache__/
 .env
 .pytest_cache/
 tests/test_compensation
+mhz19
+libmhz19.so
+tests/test_mhz19

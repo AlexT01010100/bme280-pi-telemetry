@@ -11,7 +11,8 @@ flowchart LR
     subgraph pi["Raspberry Pi 5"]
         sensor["BME280<br/>sensor"] -- "SPI<br/>/dev/spidev0.0" --> driver["C driver<br/>libbme280.so"]
         driver -- ctypes --> sampler["FastAPI service<br/>sampler + REST API"]
-        co2["MH-Z19<br/>CO₂ sensor"] -- "UART<br/>/dev/ttyAMA0" --> sampler
+        co2["MH-Z19<br/>CO₂ sensor"] -- "UART<br/>/dev/ttyAMA0" --> co2drv["C driver<br/>libmhz19.so"]
+        co2drv -- ctypes --> sampler
         sampler -- "insert / query" --> db[("PostgreSQL")]
         sampler -- "JSON" --> dash["Web dashboard"]
     end
@@ -25,13 +26,15 @@ flowchart LR
 bme280_spi.c / bme280.h   C driver (SPI, calibration, compensation)
   ├─ ./bme280_spi          standalone CLI  (make bme280_spi)
   └─ libbme280.so          shared library  (make libbme280.so)  ← loaded by Python via ctypes
-tests/                     C unit tests for calibration + compensation (make test)
+mhz19_uart.c / mhz19.h    C driver (UART/termios, framing, checksum, timeouts)
+  ├─ ./mhz19               standalone CLI  (make mhz19)
+  └─ libmhz19.so           shared library  (make libmhz19.so)   ← loaded by Python via ctypes
+tests/                     C unit tests for both drivers (make test)
 service/
-  app/driver.py            ctypes bindings, MH-Z19 serial driver, mock sensors
+  app/driver.py            ctypes bindings + mock sensors
   app/sampler.py           background loop: read sensor every N s → insert into Postgres
   app/api.py               REST API
   app/static/index.html    dashboard (no external dependencies; works offline)
-co2.py                     standalone CO2 sensor check (python3 co2.py)
 docker-compose.yml         Postgres + API
 deploy/                    systemd unit for a non-Docker install
 ```
@@ -44,9 +47,9 @@ sudo raspi-config nonint do_spi 0     # enable SPI once
 # and turn off the serial login console (raspi-config → Interface Options → Serial Port), then reboot
 git clone https://github.com/AlexT01010100/pi-air-monitor.git
 cd pi-air-monitor
-make                                  # optional: builds the CLI + .so locally
+make                                  # optional: builds the CLIs + .so files locally
 ./bme280_spi                          # sanity-check the wiring
-python3 co2.py                        # ...and the CO2 sensor (needs python3-serial)
+./mhz19                               # ...and the CO2 sensor
 docker compose pull && docker compose up -d   # or: docker compose up -d --build
 ```
 
@@ -57,7 +60,7 @@ Open `http://<pi-address>:8000/`. API docs are at `/docs`.
 ```bash
 sudo apt install postgresql python3-venv build-essential
 sudo -u postgres psql -c "CREATE USER bme PASSWORD 'bme'" -c "CREATE DATABASE telemetry OWNER bme"
-make libbme280.so
+make libbme280.so libmhz19.so
 cd service
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env                 # edit as needed
@@ -98,9 +101,15 @@ All settings are `BME_*` environment variables; see `service/.env.example`.
 
 ## Tests
 
-**C driver** (no hardware needed): checks calibration parsing, including the
-signed H4/H5 fields, the Bosch datasheet worked example, and agreement with the
-datasheet's floating-point formulas across the sensor's full operating range.
+**C drivers** (no hardware needed):
+
+- **BME280:** checks calibration parsing, including the signed H4/H5 fields, the
+  Bosch datasheet worked example, and agreement with the datasheet's
+  floating-point formulas across the sensor's full operating range.
+- **MH-Z19:** checks frame decoding and checksums, then runs the real serial code
+  against a pseudo-terminal with a thread playing the sensor. That covers the
+  termios setup, replies split across reads, resyncing after line noise,
+  timeouts, and corrupted bytes.
 
 ```bash
 make test
@@ -111,8 +120,8 @@ make test
 ```bash
 cd service
 TEST_DATABASE_URL=postgresql+asyncpg://bme:bme@localhost:5432/telemetry pytest
-# On the Pi, also read the real sensor through the ctypes bindings:
-BME_TEST_SPI_DEVICE=/dev/spidev0.0 TEST_DATABASE_URL=... pytest
+# On the Pi, also read the real sensors through the ctypes bindings:
+BME_TEST_SPI_DEVICE=/dev/spidev0.0 BME_TEST_CO2_DEVICE=/dev/ttyAMA0 TEST_DATABASE_URL=... pytest
 ```
 
 Note: the test suite truncates the `readings` table, so point it at a separate database.
@@ -122,7 +131,7 @@ Note: the test suite truncates the `readings` table, so point it at a separate d
 Every push and pull request runs [CI](.github/workflows/ci.yml):
 
 1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi) and runs the C unit tests.
-2. **Service tests**: builds `libbme280.so` and runs pytest against Postgres, including the ctypes binding tests.
+2. **Service tests**: builds `libbme280.so` and `libmhz19.so` and runs pytest against Postgres, including the ctypes binding tests.
 3. **Docker image**: builds for `linux/arm64` and `linux/amd64`. On `main` (and `v*` tags) it is published to
    `ghcr.io/alext01010100/pi-air-monitor`; pull requests build it without publishing.
 

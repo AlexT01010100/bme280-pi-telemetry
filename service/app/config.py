@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # On a Pi 5 the header UART (pins 8/10) is /dev/ttyAMA0 once
     # dtparam=uart0=on is set; /dev/serial0 points at the debug connector.
     co2_driver: Literal["mhz19", "mock", "none"] = "none"
+    co2_lib_path: Path = REPO_ROOT / "libmhz19.so"
     co2_serial_device: str = "/dev/ttyAMA0"
 
     sensor_id: str = "bme280-0"

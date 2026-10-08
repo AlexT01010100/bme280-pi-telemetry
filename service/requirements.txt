@@ -3,4 +3,3 @@ uvicorn[standard]>=0.30
 sqlalchemy[asyncio]>=2.0.30
 asyncpg>=0.29
 pydantic-settings>=2.3
-pyserial>=3.5

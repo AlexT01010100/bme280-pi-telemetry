@@ -1,4 +1,4 @@
-"""Python bindings for the C BME280 driver (libbme280.so), the MH-Z19 CO2 sensor, and mocks for development."""
+"""Python bindings for the C sensor drivers (libbme280.so, libmhz19.so) plus mocks for development."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-
-import serial
 
 # Mirrors the return codes in bme280.h
 _ERRORS = {
@@ -156,10 +154,19 @@ def create_sensor(settings) -> Sensor:
     return NativeBME280(settings.lib_path, settings.spi_device, settings.spi_speed_hz)
 
 
-# ---------- CO2 (MH-Z19 family, UART 9600 8N1) ----------
+# ---------- CO2 (MH-Z19 family over UART, libmhz19.so) ----------
 
-_MHZ19_READ_CMD = bytes([0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79])
-_CO2_RANGE = (0, 10_000)  # widest MH-Z19 variant; anything above is a garbled frame
+# Mirrors the return codes in mhz19.h
+_CO2_ERRORS = {
+    -1: "could not open serial device",
+    -2: "could not configure serial port",
+    -3: "serial I/O failed",
+    -4: "no response - check TX/RX wiring and that the UART is enabled",
+    -5: "unexpected response",
+    -6: "bad checksum",
+    -7: "value outside sensor range [0, 10000]",
+    -8: "driver not initialised",
+}
 
 
 class Co2Sensor(Protocol):
@@ -169,56 +176,54 @@ class Co2Sensor(Protocol):
     def close(self) -> None: ...
 
 
-def mhz19_checksum(frame: bytes) -> int:
-    return (0x100 - (sum(frame[1:8]) & 0xFF)) & 0xFF
-
-
-def parse_mhz19(frame: bytes) -> int:
-    """Decode a 9-byte response to command 0x86 into ppm."""
-    if len(frame) != 9:
-        raise SensorError(f"got {len(frame)}/9 bytes - check TX/RX wiring and that the UART is enabled")
-    if frame[0] != 0xFF or frame[1] != 0x86:
-        raise SensorError(f"unexpected response {frame.hex()}")
-    if frame[8] != mhz19_checksum(frame):
-        raise SensorError(f"bad checksum in {frame.hex()}")
-    ppm = frame[2] << 8 | frame[3]
-    lo, hi = _CO2_RANGE
-    if not lo <= ppm <= hi:
-        raise SensorError(f"co2_ppm={ppm} outside sensor range [{lo}, {hi}]")
-    return ppm
-
-
-class MHZ19:
-    """MH-Z19 over a serial port. The port is reopened after any failure."""
+class NativeMHZ19:
+    """Thread-safe wrapper around libmhz19.so; same lock and re-init-on-error scheme as NativeBME280."""
 
     name = "mhz19"
 
-    def __init__(self, device: str, timeout_s: float = 1.0):
+    def __init__(self, lib_path: Path, device: str, timeout_ms: int = 1000):
+        if not lib_path.exists():
+            raise SensorError(f"{lib_path} not found - run `make` in the repo root on the Pi")
+        self._lib = ctypes.CDLL(str(lib_path), use_errno=True)
+        self._lib.mhz19_init.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        self._lib.mhz19_init.restype = ctypes.c_int
+        self._lib.mhz19_read.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        self._lib.mhz19_read.restype = ctypes.c_int
+        self._lib.mhz19_close.argtypes = []
+        self._lib.mhz19_close.restype = None
+
         self._device = device
-        self._timeout_s = timeout_s
+        self._timeout_ms = timeout_ms
         self._lock = threading.Lock()
-        self._port: serial.Serial | None = None
+        self._initialised = False
+
+    def _check(self, rc: int, action: str) -> None:
+        if rc == 0:
+            return
+        msg = _CO2_ERRORS.get(rc, f"error code {rc}")
+        errno = ctypes.get_errno()
+        if errno and rc in (-1, -2, -3):
+            msg += f": {os.strerror(errno)}"
+        raise SensorError(f"{action} {self._device}: {msg}")
 
     def read(self) -> int:
         with self._lock:
             try:
-                if self._port is None:
-                    self._port = serial.Serial(self._device, 9600, timeout=self._timeout_s)
-                self._port.reset_input_buffer()  # drop any half frame from a previous timeout
-                self._port.write(_MHZ19_READ_CMD)
-                return parse_mhz19(self._port.read(9))
-            except (SensorError, OSError) as e:  # SerialException is an OSError
-                self._close()
-                raise SensorError(f"{self._device}: {e}") from e
-
-    def _close(self) -> None:
-        if self._port is not None:
-            self._port.close()
-            self._port = None
+                if not self._initialised:
+                    self._check(self._lib.mhz19_init(self._device.encode(), self._timeout_ms), "init")
+                    self._initialised = True
+                ppm = ctypes.c_int()
+                self._check(self._lib.mhz19_read(ctypes.byref(ppm)), "read")
+                return ppm.value
+            except SensorError:
+                self._lib.mhz19_close()
+                self._initialised = False
+                raise
 
     def close(self) -> None:
         with self._lock:
-            self._close()
+            self._lib.mhz19_close()
+            self._initialised = False
 
 
 class MockMHZ19:
@@ -239,4 +244,4 @@ def create_co2_sensor(settings) -> Co2Sensor | None:
         return None
     if settings.co2_driver == "mock":
         return MockMHZ19()
-    return MHZ19(settings.co2_serial_device)
+    return NativeMHZ19(settings.co2_lib_path, settings.co2_serial_device)
