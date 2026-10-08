@@ -72,6 +72,8 @@
   }
 
   * { box-sizing: border-box; }
+  /* Components below set display: flex, which would otherwise beat the hidden attribute */
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     background: var(--surface-0);
