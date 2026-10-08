@@ -62,6 +62,39 @@ async def test_co2_failure_still_stores_bme_reading(app, client):
     assert h["co2"]["consecutive_errors"] == 1 and "0/9 bytes" in h["co2"]["last_error"]
 
 
+async def test_health_reports_co2_level(app, client):
+    class FixedCo2:
+        name = "fixed"
+        ppm = 2300
+        def read(self):
+            return self.ppm
+        def close(self):
+            pass
+
+    sensor = FixedCo2()
+    app.state.sampler.co2 = sensor
+    await client.post("/api/readings/sample")
+    co2 = (await client.get("/api/health")).json()["co2"]
+    assert co2["level"]["key"] == "unhealthy" and co2["level"]["alert"] is True
+    since = co2["level_since"]
+
+    sensor.ppm = 1990  # just under the boundary: hysteresis holds the level
+    await client.post("/api/readings/sample")
+    co2 = (await client.get("/api/health")).json()["co2"]
+    assert co2["level"]["key"] == "unhealthy" and co2["level_since"] == since
+
+    sensor.ppm = 1500
+    await client.post("/api/readings/sample")
+    co2 = (await client.get("/api/health")).json()["co2"]
+    assert co2["level"]["key"] == "poor" and co2["level"]["alert"] is False
+
+
+async def test_co2_levels_endpoint(client):
+    levels = (await client.get("/api/levels/co2")).json()
+    assert [lv["key"] for lv in levels] == ["good", "moderate", "poor", "unhealthy", "dangerous"]
+    assert levels[-1]["min_ppm"] == 5000
+
+
 async def test_list_filters_by_window_and_sensor(app, client):
     now = datetime.now(timezone.utc)
     await insert(app, now - timedelta(hours=3), t=10)

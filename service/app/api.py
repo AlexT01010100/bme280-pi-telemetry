@@ -8,7 +8,8 @@ from sqlalchemy import func, literal_column, select, text
 
 from .db import ReadingRow
 from .driver import SensorError
-from .schemas import Co2Health, FieldStats, Health, ReadingOut, SensorHealth, Series, SeriesPoint, Stats
+from .levels import CO2_LEVELS
+from .schemas import Co2Health, Co2LevelOut, FieldStats, Health, ReadingOut, SensorHealth, Series, SeriesPoint, Stats
 
 router = APIRouter(prefix="/api")
 
@@ -50,6 +51,8 @@ async def health(request: Request):
             last_ok_at=sampler.co2_last_ok_at,
             last_error=sampler.co2_last_error,
             consecutive_errors=sampler.co2_consecutive_errors,
+            level=sampler.co2_detector.level,
+            level_since=sampler.co2_detector.since,
         )
     return Health(
         status="ok" if db_ok and sensor_ok else "degraded",
@@ -65,6 +68,12 @@ async def health(request: Request):
         co2=co2,
         sample_interval_s=state.settings.sample_interval_s,
     )
+
+
+@router.get("/levels/co2", response_model=list[Co2LevelOut])
+async def co2_levels():
+    """CO2 danger bands, lowest first. A band runs from its min_ppm up to the next one's."""
+    return CO2_LEVELS
 
 
 @router.get("/readings/latest", response_model=ReadingOut)

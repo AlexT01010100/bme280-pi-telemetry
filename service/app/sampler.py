@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from .config import Settings
 from .db import ReadingRow
 from .driver import Co2Sensor, Sensor, SensorError
+from .levels import Co2Detector
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class Sampler:
         self.co2_last_ok_at: datetime | None = None
         self.co2_last_error: str | None = None
         self.co2_consecutive_errors = 0
+        self.co2_detector = Co2Detector()
         self._last_prune = 0.0
 
     async def _read_co2(self) -> float | None:
@@ -48,7 +50,19 @@ class Sampler:
         self.co2_last_ok_at = datetime.now(timezone.utc)
         self.co2_last_error = None
         self.co2_consecutive_errors = 0
+        self._track_co2_level(ppm)
         return float(ppm)
+
+    def _track_co2_level(self, ppm: float) -> None:
+        change = self.co2_detector.update(ppm, self.co2_last_ok_at)
+        if change is None:
+            return
+        previous, level = change
+        transition = f"{previous.label} -> {level.label}" if previous else level.label
+        log.log(
+            logging.WARNING if level.alert else logging.INFO,
+            "CO2 level %s at %d ppm: %s", transition, ppm, level.advice,
+        )
 
     async def sample_once(self) -> ReadingRow:
         # The C driver blocks on ioctl/usleep, so keep it off the event loop.

@@ -22,6 +22,8 @@
     --critical-bg: #fde8e6;
     --warning: #8a5a00;
     --warning-bg: #fdf1d8;
+    --serious: #b54708;
+    --serious-bg: #fdeadb;
     --accent-bg: #e8f1fc;
   }
   @media (prefers-color-scheme: dark) {
@@ -42,6 +44,8 @@
       --critical-bg: #3a1714;
       --warning: #f2c14e;
       --warning-bg: #352a10;
+    --serious: #ff9d5c;
+    --serious-bg: #3a2112;
       --accent-bg: #1c2a3d;
     }
   }
@@ -62,6 +66,8 @@
     --critical-bg: #3a1714;
     --warning: #f2c14e;
     --warning-bg: #352a10;
+    --serious: #ff9d5c;
+    --serious-bg: #3a2112;
     --accent-bg: #1c2a3d;
   }
 
@@ -89,6 +95,7 @@
   .pill.ok { color: var(--good); background: var(--good-bg); }
   .pill.bad { color: var(--critical); background: var(--critical-bg); }
   .pill.wait { color: var(--warning); background: var(--warning-bg); }
+  .pill.serious { color: var(--serious); background: var(--serious-bg); }
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
   .seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
@@ -114,6 +121,17 @@
   .tile .value .unit { font-size: 16px; font-weight: 500; color: var(--text-secondary); margin-left: 3px; }
   .tile .range { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-muted); }
   .tile .range b { color: var(--text-secondary); font-weight: 600; }
+  .tile .level { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 10px; font-size: 12.5px; }
+  .tile .level .advice { color: var(--text-secondary); }
+
+  .alert {
+    display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; padding: 12px 16px;
+    border-radius: 12px; border: 1px solid currentColor; font-size: 14px;
+    color: var(--critical); background: var(--critical-bg);
+  }
+  .alert svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+  .alert b { font-weight: 650; }
+  .alert span { color: var(--text-primary); }
 
   .charts { display: grid; gap: 12px; }
   .chart { padding: 14px 16px 8px; }
@@ -123,6 +141,8 @@
   .plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
   .plot .axis text { fill: var(--text-muted); font-size: 11px; }
   .plot .gridline { stroke: var(--grid); stroke-width: 1; }
+  .plot .threshold { stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.8; }
+  .plot .threshold-label { font-size: 11px; font-weight: 600; }
   .plot .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .plot .area { fill: var(--series-1-wash); stroke: none; }
   .plot .xhair { stroke: var(--text-muted); stroke-width: 1; }
@@ -173,6 +193,7 @@
     <a class="btn" id="csv" href="/api/readings.csv">Export CSV</a>
   </div>
 
+  <div class="alert" id="alert" role="alert" hidden></div>
   <section class="tiles" id="tiles"></section>
   <section class="charts" id="charts"></section>
 
@@ -201,6 +222,11 @@ const ICONS = {
   wait: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="5"/></svg>',
 };
 const NS = "http://www.w3.org/2000/svg";
+
+// CO2 danger level -> pill style and chart colour. Bands come from /api/levels/co2.
+const LEVEL_TONE = { good: "ok", moderate: "wait", poor: "serious", unhealthy: "bad", dangerous: "bad" };
+const TONE_COLOR = { ok: "var(--good)", wait: "var(--warning)", serious: "var(--serious)", bad: "var(--critical)" };
+let co2Levels = [];
 
 let hours = 24;
 try { hours = Number(localStorage.getItem("bme.hours")) || 24; } catch {}
@@ -241,6 +267,7 @@ function buildTiles() {
         <span>avg <b id="avg-${m.key}">–</b></span>
         <span>max <b id="max-${m.key}">–</b></span>
       </div>
+      ${m.key === "co2_ppm" ? '<div class="level" id="co2-level" hidden></div>' : ""}
     </div>`).join("");
 }
 
@@ -315,6 +342,17 @@ function renderChart(c) {
     el("line", { class: "gridline", x1: pad.l, x2: W - pad.r, y1: y(v), y2: y(v) }, axis);
     el("text", { x: pad.l - 8, y: y(v) + 4, "text-anchor": "end", class: "num" }, axis).textContent = v.toFixed(tickDigits);
   }
+  if (m.key === "co2_ppm") {
+    for (const lv of co2Levels) {
+      if (!lv.min_ppm || lv.min_ppm <= y0 || lv.min_ppm >= y1) continue;
+      const color = TONE_COLOR[LEVEL_TONE[lv.key]];
+      // style, not the stroke/fill attributes: presentation attributes don't resolve var()
+      el("line", { class: "threshold", x1: pad.l, x2: W - pad.r, y1: y(lv.min_ppm), y2: y(lv.min_ppm), style: `stroke:${color}` }, axis);
+      el("text", { class: "threshold-label", x: pad.l + 6, y: y(lv.min_ppm) - 4, style: `fill:${color}` }, axis)
+        .textContent = lv.label;
+    }
+  }
+
   const nx = Math.max(2, Math.floor((W - pad.l - pad.r) / 110));
   for (let i = 0; i <= nx; i++) {
     const t = t0 + ((t1 - t0) * i) / nx;
@@ -402,8 +440,25 @@ async function loadHealth() {
     const sensors = [label("BME280", h.sensor.driver)];
     if (h.co2) sensors.push(label("MH-Z19", h.co2.driver));
     $("meta").textContent = `${sensors.join(" + ")} · updates every ${h.sample_interval_s} s`;
+    showCo2Level(h.co2);
   } catch (e) {
     setStatus("bad", "Service unreachable");
+  }
+}
+
+function showCo2Level(co2) {
+  const box = $("co2-level"), alert = $("alert");
+  const lv = co2?.level;
+  box.hidden = !lv;
+  alert.hidden = !lv?.alert;
+  if (!lv) return;
+  const since = co2.level_since ? new Date(co2.level_since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+  const tone = LEVEL_TONE[lv.key] || "wait";
+  box.innerHTML = `<span class="pill ${tone}">${ICONS[tone === "ok" ? "ok" : tone === "wait" ? "wait" : "bad"]}<span>${lv.label}</span></span>` +
+    `<span class="advice">${lv.advice}</span>`;
+  box.title = since ? `${lv.label} since ${since}` : "";
+  if (lv.alert) {
+    alert.innerHTML = `${ICONS.bad}<div><b>CO₂ level: ${lv.label}${since ? ` since ${since}` : ""}.</b> <span>${lv.advice}</span></div>`;
   }
 }
 
@@ -469,6 +524,7 @@ async function tick() {
 
 buildTiles();
 buildCharts();
+getJSON("/api/levels/co2").then((l) => { co2Levels = l; renderCharts(); }).catch(() => {});
 setStatus("wait", "Connecting…");
 setRange(hours);
 tick();

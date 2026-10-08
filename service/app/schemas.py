@@ -56,11 +56,23 @@ class SensorHealth(BaseModel):
     consecutive_errors: int
 
 
+class Co2LevelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    key: str
+    label: str
+    min_ppm: int
+    advice: str
+    alert: bool
+
+
 class Co2Health(BaseModel):
     driver: str
     last_ok_at: datetime | None
     last_error: str | None
     consecutive_errors: int
+    level: Co2LevelOut | None  # None until the first successful reading
+    level_since: datetime | None
 
 
 class Health(BaseModel):

@@ -33,6 +33,7 @@ tests/                     C unit tests for both drivers (make test)
 service/
   app/driver.py            ctypes bindings + mock sensors
   app/sampler.py           background loop: read both sensors every N s → insert into Postgres
+  app/levels.py            CO₂ danger bands + level detector (with hysteresis)
   app/api.py               REST API
   app/static/index.html    dashboard (no external dependencies; works offline)
 docker-compose.yml         Postgres + API
@@ -85,7 +86,8 @@ BME_DRIVER=mock BME_CO2_DRIVER=mock uvicorn app.main:app --reload
 
 | Method | Path | |
 |---|---|---|
-| GET  | `/api/health` | DB + sensor status (BME280 and CO₂), last error, chip ID |
+| GET  | `/api/health` | DB + sensor status (BME280 and CO₂), last error, chip ID, current CO₂ level |
+| GET  | `/api/levels/co2` | CO₂ danger bands (thresholds, labels, advice) |
 | GET  | `/api/readings/latest` | most recent stored reading |
 | GET  | `/api/readings?start=&end=&limit=` | raw readings, newest first |
 | GET  | `/api/readings/series?hours=24&points=300` | time-bucketed averages for charts |
@@ -184,6 +186,21 @@ reports the CO₂ error. Readings take about 3 minutes to settle after power-on.
   300–1100 hPa, 0–100 %) are rejected as bad SPI reads instead of being stored.
   CO₂ frames are checksum-verified, and values above 10 000 ppm are rejected.
 - **Retention:** rows older than `BME_RETENTION_DAYS` are pruned every hour.
+- **CO₂ danger levels:** each CO₂ reading is placed in a band. The dashboard
+  shows the current band on the CO₂ tile and draws the boundaries on the chart.
+  Unhealthy and Dangerous also show an alert banner and log a warning.
+
+  | Level | From | Why |
+  |---|---|---|
+  | Good | 0 ppm | outdoor air is about 420 ppm |
+  | Moderate | 800 ppm | typical of an occupied, ventilated room |
+  | Poor | 1200 ppm | drowsiness and poorer concentration are reported |
+  | Unhealthy | 2000 ppm | headaches become common |
+  | Dangerous | 5000 ppm | OSHA 8-hour workplace exposure limit |
+
+  The level rises as soon as a reading crosses a boundary, but only drops once
+  CO₂ is 50 ppm below it, so a reading hovering at a boundary doesn't make the
+  level flicker. Bands live in `service/app/levels.py`.
 
 ## Contributing
 
