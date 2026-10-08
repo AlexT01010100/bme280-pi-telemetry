@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   api:
-    image: ghcr.io/alext01010100/bme280-pi-telemetry:latest
+    image: ghcr.io/alext01010100/pi-air-monitor:latest
     build:
       context: .
       dockerfile: service/Dockerfile

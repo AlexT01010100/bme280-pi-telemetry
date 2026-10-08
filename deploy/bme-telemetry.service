@@ -11,9 +11,9 @@ Wants=network-online.target
 User=<user>
 # "spi" opens /dev/spidev0.0; "dialout" opens the CO2 sensor's /dev/ttyAMA0
 SupplementaryGroups=spi dialout
-WorkingDirectory=/home/<user>/bme280-pi-telemetry/service
-EnvironmentFile=/home/<user>/bme280-pi-telemetry/service/.env
-ExecStart=/home/<user>/bme280-pi-telemetry/service/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/home/<user>/pi-air-monitor/service
+EnvironmentFile=/home/<user>/pi-air-monitor/service/.env
+ExecStart=/home/<user>/pi-air-monitor/service/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
 

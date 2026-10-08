@@ -1,6 +1,6 @@
-# bme280-pi-telemetry
+# pi-air-monitor
 
-[![CI](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexT01010100/bme280-pi-telemetry/actions/workflows/ci.yml)
+[![CI](https://github.com/AlexT01010100/pi-air-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexT01010100/pi-air-monitor/actions/workflows/ci.yml)
 
 Raspberry Pi 5 + Adafruit BME280 (SPI) + MH-Z19 CO₂ sensor (UART) → FastAPI service → Postgres → web dashboard.
 
@@ -42,8 +42,8 @@ deploy/                    systemd unit for a non-Docker install
 sudo raspi-config nonint do_spi 0     # enable SPI once
 # for the CO2 sensor: add dtparam=uart0=on to /boot/firmware/config.txt,
 # and turn off the serial login console (raspi-config → Interface Options → Serial Port), then reboot
-git clone https://github.com/AlexT01010100/bme280-pi-telemetry.git
-cd bme280-pi-telemetry
+git clone https://github.com/AlexT01010100/pi-air-monitor.git
+cd pi-air-monitor
 make                                  # optional: builds the CLI + .so locally
 ./bme280_spi                          # sanity-check the wiring
 python3 co2.py                        # ...and the CO2 sensor (needs python3-serial)
@@ -124,7 +124,7 @@ Every push and pull request runs [CI](.github/workflows/ci.yml):
 1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi) and runs the C unit tests.
 2. **Service tests**: builds `libbme280.so` and runs pytest against Postgres, including the ctypes binding tests.
 3. **Docker image**: builds for `linux/arm64` and `linux/amd64`. On `main` (and `v*` tags) it is published to
-   `ghcr.io/alext01010100/bme280-pi-telemetry`; pull requests build it without publishing.
+   `ghcr.io/alext01010100/pi-air-monitor`; pull requests build it without publishing.
 
 The Pi pulls new images rather than GitHub pushing to it (GitHub can't reach a Pi on a home network).
 To update by hand or automatically:
@@ -132,7 +132,7 @@ To update by hand or automatically:
 ```bash
 bash deploy/update.sh                                     # pull latest image + restart if changed
 crontab -e                                                # or check every 15 minutes:
-*/15 * * * * bash ~/bme280-pi-telemetry/deploy/update.sh >> ~/bme-update.log 2>&1
+*/15 * * * * bash ~/pi-air-monitor/deploy/update.sh >> ~/bme-update.log 2>&1
 ```
 
 ## Wiring

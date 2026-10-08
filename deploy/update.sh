@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Update the Pi to the latest image published by CI.
 # Run by hand, or from cron for automatic deploys:
-#   */15 * * * * bash ~/bme280-pi-telemetry/deploy/update.sh >> ~/bme-update.log 2>&1
+#   */15 * * * * bash ~/pi-air-monitor/deploy/update.sh >> ~/bme-update.log 2>&1
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
