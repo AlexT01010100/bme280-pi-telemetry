@@ -4,7 +4,7 @@
 
 Raspberry Pi 5 + BME280 (SPI) and MH-Z19 CO₂ (UART) sensors → C drivers → FastAPI service → Postgres → web dashboard.
 
-![Live dashboard showing 24 hours of temperature, pressure, humidity and CO₂ readings](docs/dashboard.png)
+![Live dashboard showing 24 hours of temperature, pressure, humidity and CO₂ readings, with the CO₂ level marked Good and the Poor and Moderate thresholds drawn on the CO₂ chart](docs/dashboard.png)
 
 ```mermaid
 flowchart LR
@@ -189,6 +189,9 @@ reports the CO₂ error. Readings take about 3 minutes to settle after power-on.
 - **CO₂ danger levels:** each CO₂ reading is placed in a band. The dashboard
   shows the current band on the CO₂ tile and draws the boundaries on the chart.
   Unhealthy and Dangerous also show an alert banner and log a warning.
+
+  ![Dashboard with a red banner reading "CO₂ level: Unhealthy since 7:38 PM. Headaches and drowsiness are likely. Ventilate now.", and the CO₂ tile at 2295 ppm marked Unhealthy](docs/co2-alert.png)
+  *The alert state, using simulated readings.*
 
   | Level | From | Why |
   |---|---|---|
