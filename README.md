@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/AlexT01010100/pi-air-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexT01010100/pi-air-monitor/actions/workflows/ci.yml)
 
-Raspberry Pi 5 + Adafruit BME280 (SPI) + MH-Z19 CO₂ sensor (UART) → FastAPI service → Postgres → web dashboard.
+Raspberry Pi 5 + BME280 (SPI) and MH-Z19 CO₂ (UART) sensors → C drivers → FastAPI service → Postgres → web dashboard.
 
-![Live dashboard showing temperature, pressure and humidity from the sensor](docs/dashboard.png)
+![Live dashboard showing 24 hours of temperature, pressure, humidity and CO₂ readings](docs/dashboard.png)
 
 ```mermaid
 flowchart LR
@@ -32,7 +32,7 @@ mhz19_uart.c / mhz19.h    C driver (UART/termios, framing, checksum, timeouts)
 tests/                     C unit tests for both drivers (make test)
 service/
   app/driver.py            ctypes bindings + mock sensors
-  app/sampler.py           background loop: read sensor every N s → insert into Postgres
+  app/sampler.py           background loop: read both sensors every N s → insert into Postgres
   app/api.py               REST API
   app/static/index.html    dashboard (no external dependencies; works offline)
 docker-compose.yml         Postgres + API
@@ -91,7 +91,7 @@ BME_DRIVER=mock BME_CO2_DRIVER=mock uvicorn app.main:app --reload
 | GET  | `/api/readings/series?hours=24&points=300` | time-bucketed averages for charts |
 | GET  | `/api/readings/stats?hours=24` | min / max / avg / count |
 | GET  | `/api/readings.csv?hours=24` | CSV export |
-| POST | `/api/readings/sample` | read the sensor now and store it (503 on sensor error) |
+| POST | `/api/readings/sample` | read the sensors now and store the reading (503 if the BME280 fails) |
 
 All read endpoints accept `sensor_id` (default `BME_SENSOR_ID`).
 
@@ -130,7 +130,7 @@ Note: the test suite truncates the `readings` table, so point it at a separate d
 
 Every push and pull request runs [CI](.github/workflows/ci.yml):
 
-1. **C driver**: compiles with `-Werror` for x86_64 and aarch64 (Raspberry Pi) and runs the C unit tests.
+1. **C drivers**: compile with `-Werror` for x86_64 and aarch64 (Raspberry Pi) and run the C unit tests.
 2. **Service tests**: builds `libbme280.so` and `libmhz19.so` and runs pytest against Postgres, including the ctypes binding tests.
 3. **Docker image**: builds for `linux/arm64` and `linux/amd64`. On `main` (and `v*` tags) it is published to
    `ghcr.io/alext01010100/pi-air-monitor`; pull requests build it without publishing.
@@ -146,7 +146,7 @@ crontab -e                                                # or check every 15 mi
 
 ## Wiring
 
-<img src="docs/hardware.jpg" alt="Raspberry Pi 5 wired to an Adafruit BME280 breakout on a breadboard over SPI" width="360">
+<img src="docs/hardware.jpg" alt="Raspberry Pi 5 wired to an Adafruit BME280 breakout on a breadboard over SPI, and to an MH-Z19 CO₂ sensor over UART" width="420">
 
 SPI0 on the Pi 5 header, sensor CS on CE0 (`/dev/spidev0.0`). If you wired CS to
 CE1, set `BME_SPI_DEVICE=/dev/spidev0.1`.
@@ -177,9 +177,9 @@ reports the CO₂ error. Readings take about 3 minutes to settle after power-on.
 
 ## Behaviour notes
 
-- **Error recovery:** if a read fails, the C device is closed and initialised
-  again on the next tick, so unplugging and reconnecting the sensor recovers
-  without restarting the service.
+- **Error recovery:** if a read fails, that sensor's device is closed and
+  reopened on the next tick, so unplugging and reconnecting either sensor
+  recovers without restarting the service.
 - **Sanity checks:** readings outside the BME280's rated range (−40–85 °C,
   300–1100 hPa, 0–100 %) are rejected as bad SPI reads instead of being stored.
   CO₂ frames are checksum-verified, and values above 10 000 ppm are rejected.
@@ -188,7 +188,7 @@ reports the CO₂ error. Readings take about 3 minutes to settle after power-on.
 ## Contributing
 
 Issues and pull requests are welcome. You don't need the hardware: run the
-service with `BME_DRIVER=mock` and the test suite against any Postgres
+service with `BME_DRIVER=mock BME_CO2_DRIVER=mock` and the test suite against any Postgres
 (see [Tests](#tests)). For bug reports, please include your Pi model, OS
 version, and the output of `/api/health`.
 
